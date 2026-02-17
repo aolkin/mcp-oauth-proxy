@@ -1,0 +1,24 @@
+[package]
+name = "mcp-oauth-proxy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.7"
+axum-extra = "0.9"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+rand = "0.8"
+futures = "0.3"
+tokio-stream = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+askama = "0.12"
+clap = { version = "4", features = ["derive"] }
+regex-lite = "0.1"

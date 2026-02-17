@@ -1,0 +1,50 @@
+[server]
+# Public HTTPS URL where this proxy is accessible (no trailing slash)
+public_url = "https://mcp.example.com"
+
+# HMAC key for signing state blobs (at least 32 bytes when base64-decoded)
+# Generate with: openssl rand -base64 32
+# Can also be set via MCP_PROXY_STATE_SECRET environment variable
+state_secret = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+# Optional: bind address and port (defaults shown)
+# host = "0.0.0.0"
+# port = 8080
+
+# Optional: authorization code lifetime in seconds (default: 300)
+# auth_code_ttl = 300
+
+
+# --- Passthrough example ---
+# The user provides a token/API key during the OAuth flow.
+# The proxy returns it directly as the access token.
+
+[[downstream]]
+name = "linear"
+display_name = "Linear"
+strategy = "passthrough"
+downstream_url = "https://mcp.linear.app/sse"
+auth_hint = "Paste your Linear API key (Settings → API → Personal API keys)"
+# scopes = ""
+# auth_header_format = "Bearer"
+
+
+# --- Chained OAuth example ---
+# The proxy initiates a real OAuth flow with the downstream provider.
+
+[[downstream]]
+name = "github"
+display_name = "GitHub"
+strategy = "chained_oauth"
+downstream_url = "https://api.github.com/mcp"
+auth_header_format = "token"
+
+oauth_authorize_url = "https://github.com/login/oauth/authorize"
+oauth_token_url = "https://github.com/login/oauth/access_token"
+oauth_client_id = "your-github-oauth-app-client-id"
+oauth_client_secret = "your-github-oauth-app-client-secret"
+oauth_scopes = "repo user"
+# Can also be set via MCP_PROXY_GITHUB_CLIENT_SECRET environment variable
+
+# oauth_supports_refresh = false
+# oauth_token_accept = "application/json"

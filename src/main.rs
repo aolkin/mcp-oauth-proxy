@@ -75,15 +75,9 @@ async fn main() {
             "/authorize/mcp/:name",
             get(routes::authorize::authorize_get).post(routes::authorize::authorize_post),
         )
-        .route(
-            "/callback/mcp/:name",
-            get(routes::authorize::callback),
-        )
+        .route("/callback/mcp/:name", get(routes::authorize::callback))
         // Token endpoint
-        .route(
-            "/token/mcp/:name",
-            post(routes::token::token),
-        )
+        .route("/token/mcp/:name", post(routes::token::token))
         // MCP proxy endpoints
         .route(
             "/mcp/:name",

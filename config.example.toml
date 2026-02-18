@@ -2,7 +2,8 @@
 # Public HTTPS URL where this proxy is accessible (no trailing slash)
 public_url = "https://mcp.example.com"
 
-# HMAC key for signing state blobs (at least 32 bytes when base64-decoded)
+# Secret key for HMAC state signing (chained OAuth) and AES-256-GCM
+# auth code encryption (stateless). At least 32 bytes when base64-decoded.
 # Generate with: openssl rand -base64 32
 # Can also be set via MCP_PROXY_STATE_SECRET environment variable
 state_secret = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -12,6 +13,7 @@ state_secret = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 # port = 8080
 
 # Optional: authorization code lifetime in seconds (default: 300)
+# Expiry is embedded in the encrypted auth code — no server-side storage needed.
 # auth_code_ttl = 300
 
 

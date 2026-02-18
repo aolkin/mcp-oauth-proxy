@@ -72,9 +72,8 @@ The form should:
 
 **On form submission (POST):**
 
-1. Generate a random authorization code (32 bytes, base64url-encoded)
-2. Store in memory: `code → { token, pkce_challenge, redirect_uri, expires_at: now + 5min }`
-3. Redirect to `redirect_uri?code=<code>&state=<state>`
+1. Create an encrypted authorization code via AES-256-GCM containing `{ token, pkce_challenge, redirect_uri, exp: now + auth_code_ttl }` (see ARCHITECTURE.md § Stateless Encrypted Authorization Codes)
+2. Redirect to `redirect_uri?code=<encrypted_code>&state=<state>`
 
 #### Strategy: Chained OAuth
 
@@ -128,9 +127,8 @@ The form should:
      "redirect_uri": "https://your-domain.com/callback/mcp/github"
    }
    ```
-4. Generate proxy authorization code (32 bytes, base64url)
-5. Store in memory: `code → { downstream_tokens, pkce_challenge, redirect_uri, expires_at }`
-6. Redirect to Claude's redirect_uri: `<claude_redirect_uri>?code=<proxy_code>&state=<claude_state>`
+4. Create an encrypted proxy authorization code via AES-256-GCM containing `{ downstream_tokens, pkce_challenge, redirect_uri, exp }` (see ARCHITECTURE.md § Stateless Encrypted Authorization Codes)
+5. Redirect to Claude's redirect_uri: `<claude_redirect_uri>?code=<encrypted_proxy_code>&state=<claude_state>`
 
 ## Token Endpoint
 
@@ -156,12 +154,11 @@ Handles both authorization code exchange and refresh token grants.
 
 **Processing:**
 
-1. Look up code in memory store
-2. Verify code hasn't expired
-3. Verify `redirect_uri` matches stored value
-4. Verify PKCE: `base64url(sha256(code_verifier)) == stored_challenge`
-5. Remove code from store (single-use)
-6. Return tokens
+1. Decrypt the authorization code using AES-256-GCM with the server's `state_secret`
+2. Verify the code hasn't expired (check embedded `exp` timestamp)
+3. Verify `redirect_uri` matches the value embedded in the code
+4. Verify PKCE: `base64url(sha256(code_verifier)) == embedded_challenge`
+5. Return the embedded downstream tokens
 
 **Success response: `200 OK`**
 

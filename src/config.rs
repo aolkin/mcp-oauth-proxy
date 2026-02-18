@@ -17,7 +17,11 @@ pub struct ServerConfig {
     #[serde(default = "default_port")]
     pub port: u16,
     pub public_url: String,
+    /// Secret key used for HMAC-signing state parameters (chained OAuth)
+    /// and AES-256-GCM encrypting stateless authorization codes.
     pub state_secret: String,
+    /// TTL for encrypted authorization codes (seconds). The expiry is embedded
+    /// inside the encrypted code itself — no server-side storage required.
     #[serde(default = "default_auth_code_ttl")]
     pub auth_code_ttl: u64,
 }

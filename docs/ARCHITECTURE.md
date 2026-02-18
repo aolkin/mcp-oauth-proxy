@@ -58,9 +58,9 @@ Best for downstream MCPs that accept a static token.
     │                   │                      │
     │   5. User submits form with API key      │
     │                   │                      │
-    │   6. Proxy generates auth code,          │
-    │      stores mapping in memory:           │
-    │      code → { api_key, pkce_challenge }  │
+    │   6. Proxy generates encrypted auth code  │
+    │      containing { api_key, pkce_challenge,│
+    │      redirect_uri, expiry } — stateless  │
     │                   │                      │
     │   7. Redirect to redirect_uri?code=...&state=...
     │◄──────────────────│                      │
@@ -70,7 +70,7 @@ Best for downstream MCPs that accept a static token.
     │    code=...&code_verifier=...            │
     │──────────────────►│                      │
     │                   │                      │
-    │   9. Proxy verifies PKCE, looks up code, │
+    │   9. Proxy decrypts code, verifies PKCE,  │
     │      returns the API key AS the          │
     │      access_token. No refresh token.     │
     │                   │                      │
@@ -88,7 +88,7 @@ Best for downstream MCPs that accept a static token.
 ```
 
 **Key points:**
-- The authorization code is short-lived (5 minutes) and stored in an in-memory HashMap with a TTL.
+- The authorization code is a short-lived (5 minutes) AES-256-GCM encrypted blob containing the downstream token, PKCE challenge, redirect URI, and expiry. No server-side storage is needed — the code is fully self-contained.
 - The downstream API key is returned directly as the access token — no persistent storage needed.
 - The proxy reformats the auth header based on config (e.g., `Authorization: Bearer X` → `X-API-Key: X`, or `Authorization: token X`).
 
@@ -125,11 +125,11 @@ Best for downstream services that have their own OAuth flow.
     │                   │─────────────────►│                   │
     │                   │◄─────────────────│                   │
     │                   │                  │                   │
-    │   8. Proxy generates its own auth    │                   │
-    │      code, stores mapping in memory: │                   │
-    │      code → { gh_access_token,       │                   │
-    │               gh_refresh_token,      │                   │
-    │               pkce_challenge }       │                   │
+    │   8. Proxy generates encrypted auth   │                   │
+    │      code containing:                │                   │
+    │      { gh_access_token,              │                   │
+    │        gh_refresh_token,             │                   │
+    │        pkce_challenge, expiry }      │                   │
     │                   │                  │                   │
     │   9. Redirect to Claude's            │                   │
     │      redirect_uri with proxy's code  │                   │
@@ -179,19 +179,29 @@ Best for downstream services that have their own OAuth flow.
 
 ## Component Design
 
-### Authorization Code Store
+### Stateless Encrypted Authorization Codes
 
-**In-memory only.** Auth codes are extremely short-lived (5 minutes max). Use a `HashMap<String, PendingGrant>` behind a `tokio::sync::RwLock`, with a background task that sweeps expired entries every 60 seconds.
+**Fully stateless.** Authorization codes are AES-256-GCM encrypted blobs — no in-memory HashMap, no sweeper task, no concerns about multi-instance deployments.
+
+The authorization code itself contains everything needed for token exchange:
+
+```
+auth_code = base64url( nonce || AES-256-GCM( plaintext, key, nonce ) )
+```
+
+The plaintext is JSON:
+```json
+{
+    "downstream_tokens": { "type": "passthrough", "access_token": "..." },
+    "pkce_challenge": "...",
+    "redirect_uri": "...",
+    "exp": 1234567890
+}
+```
+
+The AES-256 key is derived by SHA-256 hashing the server's `state_secret` (the same secret used for HMAC state signing in chained OAuth). A fresh random 12-byte nonce is generated per code.
 
 ```rust
-struct PendingGrant {
-    pkce_challenge: String,       // S256 hash
-    pkce_method: String,          // "S256"
-    downstream_tokens: DownstreamTokens,  // What to return on exchange
-    redirect_uri: String,         // Claude's redirect URI (must match on exchange)
-    expires_at: Instant,          // 5 minutes from creation
-}
-
 enum DownstreamTokens {
     Passthrough {
         access_token: String,     // The raw API key / token
@@ -203,6 +213,20 @@ enum DownstreamTokens {
     },
 }
 ```
+
+On `/token`, the proxy:
+1. Base64url-decodes the authorization code
+2. Splits off the 12-byte nonce
+3. Decrypts with AES-256-GCM (authentication tag prevents tampering)
+4. Checks the embedded `exp` timestamp
+5. Verifies PKCE and redirect_uri match
+6. Returns the embedded downstream tokens
+
+**Benefits over in-memory store:**
+- No shared state — works with multiple proxy instances behind a load balancer
+- No background sweeper task needed — expiry is checked on decryption
+- No memory growth from abandoned auth flows
+- Authorization codes are tamper-proof via AES-GCM authentication tag
 
 ### SSE Proxy
 
@@ -292,7 +316,7 @@ All error responses from `/token` must be JSON per RFC 6749 §5.2.
 1. **HTTPS required.** The proxy must be behind TLS. Tokens travel in headers.
 2. **PKCE is mandatory.** Never skip PKCE verification — it prevents authorization code interception.
 3. **State signing.** For chained OAuth, always verify the HMAC on the state parameter to prevent CSRF and parameter injection.
-4. **Auth code entropy.** Use `rand::rngs::OsRng` with at least 32 bytes, base64url-encoded.
+4. **Auth code encryption.** Authorization codes are AES-256-GCM encrypted with a random nonce per code. The authentication tag prevents tampering, and the key is derived from the `state_secret`.
 5. **No logging of tokens.** Never log access tokens, refresh tokens, or API keys. Log request paths and status codes only.
 6. **CORS.** The authorize page needs to work in a browser redirect flow. MCP endpoints may need appropriate CORS headers depending on how Claude's connector initiates requests.
 7. **Rate limiting.** Consider rate limiting `/token` and `/authorize` to prevent brute force. Even a simple in-memory counter per IP is better than nothing.

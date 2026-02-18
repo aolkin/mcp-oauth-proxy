@@ -14,12 +14,14 @@ port = 8080
 # Must be HTTPS in production
 public_url = "https://mcp-proxy.example.com"
 
-# Secret key for HMAC-signing state parameters in chained OAuth flows
+# Secret key for HMAC-signing state parameters (chained OAuth) and
+# AES-256-GCM encrypting authorization codes (stateless auth codes).
 # Generate with: openssl rand -base64 32
 # Can also be set via MCP_PROXY_STATE_SECRET env var (env var takes precedence)
 state_secret = "CHANGE_ME_TO_A_RANDOM_32_BYTE_BASE64_STRING"
 
 # Authorization code TTL in seconds (default: 300 = 5 minutes)
+# The expiry is embedded inside the encrypted auth code — no server-side storage needed.
 auth_code_ttl = 300
 
 # ─────────────────────────────────────────────
@@ -109,8 +111,8 @@ oauth_token_accept = "application/json"
 | `host` | string | No | `"0.0.0.0"` | Bind address |
 | `port` | integer | No | `8080` | Bind port |
 | `public_url` | string | **Yes** | — | Public HTTPS URL of the proxy. Used in all generated URLs. No trailing slash. |
-| `state_secret` | string | **Yes** | — | HMAC key for signing state blobs. Override with `MCP_PROXY_STATE_SECRET` env var. |
-| `auth_code_ttl` | integer | No | `300` | Authorization code lifetime in seconds |
+| `state_secret` | string | **Yes** | — | Secret key for HMAC state signing and AES-256-GCM auth code encryption. Override with `MCP_PROXY_STATE_SECRET` env var. |
+| `auth_code_ttl` | integer | No | `300` | Authorization code lifetime in seconds (embedded in encrypted code) |
 
 ### `[[downstream]]` — Common Fields
 

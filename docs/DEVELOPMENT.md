@@ -17,10 +17,11 @@ serde_json = "1"
 toml = "0.8"
 
 # OAuth / crypto
-sha2 = "0.10"            # PKCE S256 verification
-hmac = "0.12"             # State signing
+sha2 = "0.10"            # PKCE S256 verification + AES key derivation
+hmac = "0.12"             # State signing (chained OAuth)
+aes-gcm = "0.10"          # Encrypted authorization codes (stateless)
 base64 = "0.22"           # base64url encoding
-rand = "0.8"              # Auth code generation
+rand = "0.8"              # Nonce generation (used internally by aes-gcm)
 
 # SSE
 axum-extra = { version = "0.9", features = ["typed-header"] }
@@ -65,25 +66,39 @@ All handlers extract the path suffix (e.g., `mcp/github` → `github`) and look 
 ```rust
 struct AppState {
     config: Config,
-    // In-memory auth code store
-    pending_grants: Arc<RwLock<HashMap<String, PendingGrant>>>,
+    // No in-memory auth code store needed — auth codes are encrypted blobs.
+    // The state_secret (decoded from config) is used for both HMAC state signing
+    // and AES-256-GCM auth code encryption.
+    state_secret: Vec<u8>,
     // HTTP client (reuse connections)
     http_client: reqwest::Client,
 }
 ```
 
-### Auth Code Generation
+### Encrypted Authorization Codes (Stateless)
+
+Authorization codes are AES-256-GCM encrypted blobs containing the downstream token,
+PKCE challenge, redirect URI, and expiry. No server-side storage is needed.
+
+See `src/oauth/codes.rs` for the full implementation. Usage:
 
 ```rust
-use rand::RngCore;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
+use crate::oauth::codes::{create_auth_code, validate_auth_code, DownstreamTokens};
 
-fn generate_auth_code() -> String {
-    let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
-    URL_SAFE_NO_PAD.encode(bytes)
-}
+// Creating a code (in /authorize POST or /callback)
+let code = create_auth_code(
+    DownstreamTokens::Passthrough { access_token: user_token },
+    &pkce_challenge,
+    &redirect_uri,
+    config.server.auth_code_ttl,
+    &state_secret,
+)?;
+
+// Validating a code (in /token)
+let grant = validate_auth_code(&code, &state_secret)?;
+// grant.downstream_tokens — the embedded tokens to return
+// grant.pkce_challenge — verify against code_verifier
+// grant.redirect_uri — verify matches request
 ```
 
 ### PKCE Verification
@@ -200,23 +215,6 @@ async fn proxy_sse_raw(/* ... */) -> Result<Response, StatusCode> {
 
 This raw byte passthrough approach is recommended — it's simpler and preserves the exact SSE framing from the downstream server.
 
-### Background Cleanup Task
-
-Sweep expired auth codes every 60 seconds:
-
-```rust
-fn spawn_cleanup_task(pending_grants: Arc<RwLock<HashMap<String, PendingGrant>>>) {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
-        loop {
-            interval.tick().await;
-            let mut grants = pending_grants.write().await;
-            grants.retain(|_, grant| grant.expires_at > Instant::now());
-        }
-    });
-}
-```
-
 ### Authorize Form HTML
 
 Keep it minimal. A single HTML page with inline CSS:
@@ -298,7 +296,7 @@ curl -N https://localhost:8080/mcp/linear \
 
 1. **PKCE verification** — correct verifier passes, wrong verifier fails, empty strings handled
 2. **State signing/verification** — round-trips correctly, tampered state rejected, expired state rejected
-3. **Auth code lifecycle** — generation, lookup, expiry, single-use enforcement
+3. **Auth code encryption** — round-trip encrypt/decrypt, wrong secret rejected, expired codes rejected, tampered codes rejected
 4. **Config validation** — missing fields caught, duplicate names caught, bad formats caught
 5. **Header remapping** — each format option produces correct header name+value
 

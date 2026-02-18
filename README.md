@@ -47,7 +47,7 @@ mcp-oauth-proxy/
 │   ├── oauth/
 │   │   ├── mod.rs
 │   │   ├── pkce.rs          # PKCE verification
-│   │   └── codes.rs         # In-memory authorization code store (short-lived)
+│   │   └── codes.rs         # Stateless encrypted authorization codes (AES-256-GCM)
 │   └── proxy/
 │       ├── mod.rs
 │       └── sse.rs           # SSE stream proxying

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Stateless encrypted authorization codes.
 //!
 //! Instead of an in-memory store, the authorization code itself is an AES-256-GCM
@@ -19,7 +20,7 @@
 //! ```
 
 use aes_gcm::aead::{Aead, KeyInit, OsRng};
-use aes_gcm::{Aes256Gcm, AeadCore, Nonce};
+use aes_gcm::{AeadCore, Aes256Gcm, Nonce};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -113,10 +114,7 @@ pub struct ValidatedGrant {
 ///
 /// Returns the embedded grant data if the code is valid, not expired,
 /// and decrypts successfully. Returns an error description otherwise.
-pub fn validate_auth_code(
-    code: &str,
-    state_secret: &[u8],
-) -> Result<ValidatedGrant, &'static str> {
+pub fn validate_auth_code(code: &str, state_secret: &[u8]) -> Result<ValidatedGrant, &'static str> {
     let blob = URL_SAFE_NO_PAD
         .decode(code)
         .map_err(|_| "invalid authorization code encoding")?;

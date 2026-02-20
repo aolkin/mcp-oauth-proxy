@@ -23,6 +23,7 @@ pub struct ServerConfig {
     /// TTL for encrypted authorization codes (seconds). The expiry is embedded
     /// inside the encrypted code itself — no server-side storage required.
     #[serde(default = "default_auth_code_ttl")]
+    #[allow(dead_code)]
     pub auth_code_ttl: u64,
 }
 
@@ -56,10 +57,12 @@ pub struct DownstreamConfig {
     #[serde(default = "default_auth_header_format")]
     pub auth_header_format: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub scopes: String,
 
     // Passthrough-only fields
     #[serde(default)]
+    #[allow(dead_code)]
     pub auth_hint: String,
 
     // Chained OAuth fields
@@ -72,10 +75,13 @@ pub struct DownstreamConfig {
     #[serde(default)]
     pub oauth_client_secret: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub oauth_scopes: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub oauth_supports_refresh: bool,
     #[serde(default = "default_oauth_token_accept")]
+    #[allow(dead_code)]
     pub oauth_token_accept: String,
 }
 
@@ -144,15 +150,19 @@ fn validate_server(server: &ServerConfig) -> Result<(), String> {
             "server.public_url uses http:// — HTTPS is required for production deployments"
         );
     } else if !server.public_url.starts_with("https://") {
-        return Err("server.public_url must start with https:// (or http:// for local dev)".to_string());
+        return Err(
+            "server.public_url must start with https:// (or http:// for local dev)".to_string(),
+        );
     }
 
     // state_secret must decode to at least 32 bytes
     if server.state_secret.is_empty() {
         return Err("server.state_secret is required".to_string());
     }
-    match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &server.state_secret)
-    {
+    match base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &server.state_secret,
+    ) {
         Ok(bytes) => {
             if bytes.len() < 32 {
                 return Err(format!(
@@ -209,8 +219,7 @@ fn validate_downstreams(downstreams: &[DownstreamConfig]) -> Result<(), String> 
                 ds.name
             ));
         }
-        if !ds.downstream_url.starts_with("http://") && !ds.downstream_url.starts_with("https://")
-        {
+        if !ds.downstream_url.starts_with("http://") && !ds.downstream_url.starts_with("https://") {
             return Err(format!(
                 "downstream '{}': downstream_url must be a valid HTTP(S) URL",
                 ds.name

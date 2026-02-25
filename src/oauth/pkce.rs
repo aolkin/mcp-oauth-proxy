@@ -20,35 +20,19 @@ mod tests {
 
     #[test]
     fn test_rfc7636_appendix_b() {
-        // RFC 7636 Appendix B test vectors
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
         assert!(verify_pkce(verifier, challenge));
     }
 
     #[test]
-    fn test_wrong_verifier_fails() {
+    fn test_mismatches_rejected() {
         let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
         assert!(!verify_pkce("wrong-verifier", challenge));
-    }
-
-    #[test]
-    fn test_empty_verifier_fails() {
-        let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
         assert!(!verify_pkce("", challenge));
-    }
-
-    #[test]
-    fn test_empty_challenge_fails() {
-        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-        assert!(!verify_pkce(verifier, ""));
-    }
-
-    #[test]
-    fn test_round_trip() {
-        let verifier = "some-random-code-verifier-string-for-testing";
-        let hash = Sha256::digest(verifier.as_bytes());
-        let challenge = URL_SAFE_NO_PAD.encode(hash);
-        assert!(verify_pkce(verifier, &challenge));
+        assert!(!verify_pkce(
+            "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+            ""
+        ));
     }
 }

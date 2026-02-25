@@ -51,90 +51,53 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn test_secret() -> Vec<u8> {
-        vec![0xCC; 32]
-    }
+    const SECRET: &[u8] = &[0xCC; 32];
 
     #[test]
     fn test_round_trip() {
-        let secret = test_secret();
         let payload = json!({
             "redirect_uri": "https://claude.ai/callback",
             "code_challenge": "abc123",
             "client_state": "xyz"
         });
-
-        let signed = sign_state(&payload, &secret);
-        let recovered = verify_state(&signed, &secret).expect("should verify");
-        assert_eq!(recovered, payload);
+        let signed = sign_state(&payload, SECRET);
+        assert_eq!(verify_state(&signed, SECRET).unwrap(), payload);
     }
 
     #[test]
-    fn test_tampered_payload_rejected() {
-        let secret = test_secret();
+    fn test_integrity_checks() {
         let payload = json!({"key": "value"});
-        let signed = sign_state(&payload, &secret);
+        let signed = sign_state(&payload, SECRET);
 
-        // Tamper: flip a character in the payload portion (before the dot)
+        // Tampered payload
         let dot_pos = signed.find('.').unwrap();
         let mut tampered = signed.into_bytes();
-        let idx = dot_pos / 2; // somewhere in the payload
-        tampered[idx] = if tampered[idx] == b'A' { b'B' } else { b'A' };
-        let tampered = String::from_utf8(tampered).unwrap();
+        tampered[dot_pos / 2] ^= 1;
+        assert!(verify_state(&String::from_utf8(tampered).unwrap(), SECRET).is_none());
 
-        assert!(verify_state(&tampered, &secret).is_none());
-    }
-
-    #[test]
-    fn test_wrong_secret_rejected() {
-        let payload = json!({"key": "value"});
+        // Wrong secret
         let signed = sign_state(&payload, &[0xAA; 32]);
         assert!(verify_state(&signed, &[0xBB; 32]).is_none());
     }
 
     #[test]
-    fn test_expired_state_rejected() {
-        let secret = test_secret();
-        // exp = 0 means already expired
-        let payload = json!({
-            "key": "value",
-            "exp": 0
-        });
-        let signed = sign_state(&payload, &secret);
-        assert!(verify_state(&signed, &secret).is_none());
-    }
-
-    #[test]
-    fn test_future_expiry_accepted() {
-        let secret = test_secret();
-        let future_exp = SystemTime::now()
+    fn test_expiry() {
+        let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs()
-            + 3600;
-        let payload = json!({
-            "key": "value",
-            "exp": future_exp
-        });
-        let signed = sign_state(&payload, &secret);
-        assert!(verify_state(&signed, &secret).is_some());
+            .as_secs();
+
+        let expired = sign_state(&json!({"exp": 0}), SECRET);
+        assert!(verify_state(&expired, SECRET).is_none());
+
+        let valid = sign_state(&json!({"exp": now + 3600}), SECRET);
+        assert!(verify_state(&valid, SECRET).is_some());
     }
 
     #[test]
-    fn test_no_dot_returns_none() {
-        let secret = test_secret();
-        assert!(verify_state("nodothere", &secret).is_none());
-    }
-
-    #[test]
-    fn test_empty_string_returns_none() {
-        let secret = test_secret();
-        assert!(verify_state("", &secret).is_none());
-    }
-
-    #[test]
-    fn test_garbage_returns_none() {
-        let secret = test_secret();
-        assert!(verify_state("!!!.!!!", &secret).is_none());
+    fn test_malformed_input_returns_none() {
+        assert!(verify_state("", SECRET).is_none());
+        assert!(verify_state("nodothere", SECRET).is_none());
+        assert!(verify_state("!!!.!!!", SECRET).is_none());
     }
 }

@@ -26,37 +26,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_bearer_format() {
-        let (name, value) = remap_auth_header("Bearer", "my-token-123");
-        assert_eq!(name, "authorization");
-        assert_eq!(value, "Bearer my-token-123");
+    fn test_authorization_schemes() {
+        for (scheme, token, expected_value) in [
+            ("Bearer", "tok-123", "Bearer tok-123"),
+            ("token", "ghp_abc", "token ghp_abc"),
+            ("Basic", "dXNlcjpw", "Basic dXNlcjpw"),
+        ] {
+            let (name, value) = remap_auth_header(scheme, token);
+            assert_eq!(name, "authorization");
+            assert_eq!(value, expected_value);
+        }
     }
 
     #[test]
-    fn test_token_format() {
-        let (name, value) = remap_auth_header("token", "ghp_abc123");
-        assert_eq!(name, "authorization");
-        assert_eq!(value, "token ghp_abc123");
-    }
-
-    #[test]
-    fn test_basic_format() {
-        let (name, value) = remap_auth_header("Basic", "dXNlcjpwYXNz");
-        assert_eq!(name, "authorization");
-        assert_eq!(value, "Basic dXNlcjpwYXNz");
-    }
-
-    #[test]
-    fn test_custom_x_api_key() {
+    fn test_custom_x_headers() {
         let (name, value) = remap_auth_header("X-API-Key", "sk-12345");
-        assert_eq!(name, "X-API-Key");
-        assert_eq!(value, "sk-12345");
-    }
+        assert_eq!((name.as_str(), value.as_str()), ("X-API-Key", "sk-12345"));
 
-    #[test]
-    fn test_custom_x_header() {
         let (name, value) = remap_auth_header("X-Custom-Auth", "my-secret");
-        assert_eq!(name, "X-Custom-Auth");
-        assert_eq!(value, "my-secret");
+        assert_eq!(
+            (name.as_str(), value.as_str()),
+            ("X-Custom-Auth", "my-secret")
+        );
     }
 }

@@ -6,8 +6,27 @@ mod routes;
 
 use axum::routing::{get, post};
 use axum::Router;
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use clap::Parser;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+/// Shared application state passed to all route handlers.
+#[derive(Clone)]
+pub struct AppState {
+    pub config: Arc<config::Config>,
+    /// Decoded state_secret bytes — used for HMAC state signing and AES auth code encryption.
+    pub state_secret: Vec<u8>,
+    pub http_client: reqwest::Client,
+}
+
+impl AppState {
+    /// Look up a downstream by name.
+    pub fn find_downstream(&self, name: &str) -> Option<&config::DownstreamConfig> {
+        self.config.downstreams.iter().find(|ds| ds.name == name)
+    }
+}
 
 /// MCP OAuth Proxy — bridges OAuth 2.1 for Claude's MCP connectors
 /// to downstream MCP servers using various auth strategies.
@@ -60,6 +79,20 @@ async fn main() {
         );
     }
 
+    // Decode state_secret from base64 (already validated by config loader)
+    let state_secret = STANDARD
+        .decode(&cfg.server.state_secret)
+        .expect("state_secret base64 already validated");
+
+    let bind_addr = format!("{}:{}", cfg.server.host, cfg.server.port);
+    let public_url = cfg.server.public_url.clone();
+
+    let state = AppState {
+        config: Arc::new(cfg),
+        state_secret,
+        http_client: reqwest::Client::new(),
+    };
+
     let app = Router::new()
         // Discovery endpoints
         .route(
@@ -82,11 +115,11 @@ async fn main() {
         .route(
             "/mcp/:name",
             get(routes::mcp_proxy::mcp_sse).post(routes::mcp_proxy::mcp_post),
-        );
+        )
+        .with_state(state);
 
-    let bind_addr = format!("{}:{}", cfg.server.host, cfg.server.port);
     tracing::info!("Listening on {bind_addr}");
-    tracing::info!("Public URL: {}", cfg.server.public_url);
+    tracing::info!("Public URL: {public_url}");
 
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await

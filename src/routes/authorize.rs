@@ -1,23 +1,186 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::response::{Html, IntoResponse, Redirect};
+use axum::Form;
+use serde::Deserialize;
 
+use crate::config::Strategy;
+use crate::oauth::codes::{self, DownstreamTokens};
 use crate::AppState;
+
+#[derive(Deserialize)]
+pub struct AuthorizeQuery {
+    response_type: Option<String>,
+    #[allow(dead_code)]
+    client_id: Option<String>,
+    redirect_uri: Option<String>,
+    state: Option<String>,
+    code_challenge: Option<String>,
+    code_challenge_method: Option<String>,
+    #[allow(dead_code)]
+    scope: Option<String>,
+}
 
 /// GET /authorize/mcp/:name — show authorization page
 pub async fn authorize_get(
-    State(_state): State<AppState>,
-    Path(_name): Path<String>,
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Query(params): Query<AuthorizeQuery>,
 ) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, "not yet implemented")
+    let Some(ds) = state.find_downstream(&name) else {
+        return (StatusCode::NOT_FOUND, "Unknown downstream").into_response();
+    };
+
+    if params.response_type.as_deref() != Some("code") {
+        return (StatusCode::BAD_REQUEST, "response_type must be 'code'").into_response();
+    }
+
+    let Some(redirect_uri) = &params.redirect_uri else {
+        return (StatusCode::BAD_REQUEST, "redirect_uri is required").into_response();
+    };
+
+    let Some(oauth_state) = &params.state else {
+        return (StatusCode::BAD_REQUEST, "state is required").into_response();
+    };
+
+    let Some(code_challenge) = &params.code_challenge else {
+        return (StatusCode::BAD_REQUEST, "code_challenge is required").into_response();
+    };
+
+    if params.code_challenge_method.as_deref() != Some("S256") {
+        return (
+            StatusCode::BAD_REQUEST,
+            "code_challenge_method must be 'S256'",
+        )
+            .into_response();
+    }
+
+    match ds.strategy {
+        Strategy::Passthrough => {
+            let auth_hint = if ds.auth_hint.is_empty() {
+                "Enter your API token or key for this service.".to_string()
+            } else {
+                html_escape(&ds.auth_hint)
+            };
+
+            let scopes_html = if ds.scopes.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    r#"<p style="color:#666;font-size:0.9em">Required scopes: <code>{}</code></p>"#,
+                    html_escape(&ds.scopes)
+                )
+            };
+
+            let html = format!(
+                r#"<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Authorize — {display_name}</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 480px; margin: 60px auto; padding: 0 20px; background: #f5f5f5; }}
+    .card {{ background: white; border-radius: 8px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
+    h1 {{ font-size: 1.4em; margin: 0 0 8px 0; }}
+    .hint {{ color: #666; margin: 0 0 20px 0; }}
+    label {{ display: block; font-weight: 600; margin-bottom: 6px; }}
+    input[type="password"] {{ width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; box-sizing: border-box; }}
+    button {{ margin-top: 16px; width: 100%; padding: 12px; background: #2563eb; color: white; border: none; border-radius: 4px; font-size: 1em; cursor: pointer; }}
+    button:hover {{ background: #1d4ed8; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>{display_name}</h1>
+    <p class="hint">{auth_hint}</p>
+    {scopes_html}
+    <form method="POST">
+      <input type="hidden" name="state" value="{state_val}">
+      <input type="hidden" name="redirect_uri" value="{redirect_uri_val}">
+      <input type="hidden" name="code_challenge" value="{code_challenge_val}">
+      <input type="hidden" name="code_challenge_method" value="S256">
+      <label for="token">API Token</label>
+      <input type="password" id="token" name="token" required autofocus placeholder="Paste your token here">
+      <button type="submit">Authorize</button>
+    </form>
+  </div>
+</body>
+</html>"#,
+                display_name = html_escape(&ds.display_name),
+                auth_hint = auth_hint,
+                scopes_html = scopes_html,
+                state_val = html_escape(oauth_state),
+                redirect_uri_val = html_escape(redirect_uri),
+                code_challenge_val = html_escape(code_challenge),
+            );
+
+            Html(html).into_response()
+        }
+        Strategy::ChainedOauth => (
+            StatusCode::NOT_IMPLEMENTED,
+            "Chained OAuth not yet implemented",
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct AuthorizeForm {
+    token: String,
+    state: String,
+    redirect_uri: String,
+    code_challenge: String,
+    #[allow(dead_code)]
+    code_challenge_method: String,
 }
 
 /// POST /authorize/mcp/:name — submit credentials (passthrough)
 pub async fn authorize_post(
-    State(_state): State<AppState>,
-    Path(_name): Path<String>,
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Form(form): Form<AuthorizeForm>,
 ) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, "not yet implemented")
+    let Some(ds) = state.find_downstream(&name) else {
+        return (StatusCode::NOT_FOUND, "Unknown downstream").into_response();
+    };
+
+    if ds.strategy != Strategy::Passthrough {
+        return (
+            StatusCode::BAD_REQUEST,
+            "POST authorize only supported for passthrough strategy",
+        )
+            .into_response();
+    }
+
+    if form.token.is_empty() {
+        return (StatusCode::BAD_REQUEST, "token is required").into_response();
+    }
+
+    let code = match codes::create_auth_code(
+        DownstreamTokens::Passthrough {
+            access_token: form.token,
+        },
+        &form.code_challenge,
+        &form.redirect_uri,
+        state.config.server.auth_code_ttl,
+        &state.state_secret,
+    ) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to create auth code: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response();
+        }
+    };
+
+    let redirect_url = format!(
+        "{}?code={}&state={}",
+        form.redirect_uri,
+        urlencoding::encode(&code),
+        urlencoding::encode(&form.state),
+    );
+
+    Redirect::to(&redirect_url).into_response()
 }
 
 /// GET /callback/mcp/:name — OAuth provider callback (chained OAuth)
@@ -25,5 +188,16 @@ pub async fn callback(
     State(_state): State<AppState>,
     Path(_name): Path<String>,
 ) -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, "not yet implemented")
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        "Chained OAuth callback not yet implemented",
+    )
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }

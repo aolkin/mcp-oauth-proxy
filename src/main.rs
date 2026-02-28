@@ -1,9 +1,3 @@
-mod auth;
-mod config;
-mod oauth;
-mod proxy;
-mod routes;
-
 use axum::routing::{get, post};
 use axum::Router;
 use base64::engine::general_purpose::STANDARD;
@@ -12,21 +6,9 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Shared application state passed to all route handlers.
-#[derive(Clone)]
-pub struct AppState {
-    pub config: Arc<config::Config>,
-    /// Decoded state_secret bytes — used for HMAC state signing and AES auth code encryption.
-    pub state_secret: Vec<u8>,
-    pub http_client: reqwest::Client,
-}
-
-impl AppState {
-    /// Look up a downstream by name.
-    pub fn find_downstream(&self, name: &str) -> Option<&config::DownstreamConfig> {
-        self.config.downstreams.iter().find(|ds| ds.name == name)
-    }
-}
+use mcp_oauth_proxy::config;
+use mcp_oauth_proxy::routes;
+use mcp_oauth_proxy::AppState;
 
 /// MCP OAuth Proxy — bridges OAuth 2.1 for Claude's MCP connectors
 /// to downstream MCP servers using various auth strategies.
@@ -96,24 +78,24 @@ async fn main() {
     let app = Router::new()
         // Discovery endpoints
         .route(
-            "/.well-known/oauth-protected-resource/mcp/:name",
+            "/.well-known/oauth-protected-resource/mcp/{name}",
             get(routes::well_known::protected_resource),
         )
         .route(
-            "/.well-known/oauth-authorization-server/mcp/:name",
+            "/.well-known/oauth-authorization-server/mcp/{name}",
             get(routes::well_known::authorization_server),
         )
         // Authorization endpoints
         .route(
-            "/authorize/mcp/:name",
+            "/authorize/mcp/{name}",
             get(routes::authorize::authorize_get).post(routes::authorize::authorize_post),
         )
-        .route("/callback/mcp/:name", get(routes::authorize::callback))
+        .route("/callback/mcp/{name}", get(routes::authorize::callback))
         // Token endpoint
-        .route("/token/mcp/:name", post(routes::token::token))
+        .route("/token/mcp/{name}", post(routes::token::token))
         // MCP proxy endpoints
         .route(
-            "/mcp/:name",
+            "/mcp/{name}",
             get(routes::mcp_proxy::mcp_sse).post(routes::mcp_proxy::mcp_post),
         )
         .with_state(state);

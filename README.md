@@ -18,41 +18,6 @@ The proxy initiates a real OAuth flow with the downstream service (e.g., GitHub)
 
 **No storage required** (stateless). Tradeoff: if a rotating refresh token is lost mid-refresh, the user must re-authorize.
 
-## Tech Stack
-
-- **Rust** with `axum` for HTTP/SSE
-- **reqwest** for outbound HTTP to downstream MCPs
-- **TOML** config file for downstream MCP definitions
-- Deployable anywhere: OCI free tier, a VPS, Docker, etc.
-
-## Project Structure
-
-```
-mcp-oauth-proxy/
-├── Cargo.toml
-├── config.toml              # Downstream MCP definitions
-├── src/
-│   ├── main.rs              # Entrypoint, router setup
-│   ├── config.rs            # Config parsing
-│   ├── routes/
-│   │   ├── mod.rs
-│   │   ├── well_known.rs    # /.well-known/oauth-authorization-server/*
-│   │   ├── authorize.rs     # /authorize/* (HTML form + submission)
-│   │   ├── token.rs         # /token/* (code exchange + refresh)
-│   │   └── mcp_proxy.rs     # /mcp/* (SSE proxy to downstream)
-│   ├── auth/
-│   │   ├── mod.rs
-│   │   ├── passthrough.rs   # Passthrough strategy logic
-│   │   └── chained_oauth.rs # Chained OAuth strategy logic
-│   ├── oauth/
-│   │   ├── mod.rs
-│   │   ├── pkce.rs          # PKCE verification
-│   │   └── codes.rs         # Stateless encrypted authorization codes (AES-256-GCM)
-│   └── proxy/
-│       ├── mod.rs
-│       └── sse.rs           # SSE stream proxying
-```
-
 ## Quick Start
 
 ```bash
@@ -61,42 +26,140 @@ cargo build --release
 
 # Edit config
 cp config.example.toml config.toml
-# (configure your downstream MCPs - see CONFIG.md)
+# (configure your downstream MCPs — see docs/CONFIG.md)
+
+# Generate a secret key
+openssl rand -base64 32
+# Put this value in config.toml as state_secret
 
 # Run
-./target/release/mcp-oauth-proxy --config config.toml --port 8080
+./target/release/mcp-oauth-proxy --config config.toml
 
 # In Claude's connector settings, add your MCP URL:
 #   https://your-domain.com/mcp/github
-# Claude will discover OAuth endpoints via:
-#   GET /.well-known/oauth-protected-resource/mcp/github
-#   GET /.well-known/oauth-authorization-server/mcp/github
+# Claude will discover OAuth endpoints automatically via .well-known
 ```
 
-## Deployment
+## Setup Walkthrough: From Zero to Working Proxy
 
-### Requirements
-- A domain with HTTPS (Claude's connector requires it)
-- Rust 1.75+ to build
-- A reverse proxy (nginx/caddy) for TLS termination, or run behind Cloudflare Tunnel
+### 1. Build
 
-### Docker
-```dockerfile
-FROM rust:1.75 AS builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
-
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/mcp-oauth-proxy /usr/local/bin/
-COPY config.toml /etc/mcp-oauth-proxy/config.toml
-EXPOSE 8080
-CMD ["mcp-oauth-proxy", "--config", "/etc/mcp-oauth-proxy/config.toml"]
+```bash
+cargo build --release
 ```
+
+Or with Docker:
+
+```bash
+docker build -t mcp-oauth-proxy .
+```
+
+### 2. Configure
+
+```bash
+cp config.example.toml config.toml
+```
+
+Edit `config.toml`:
+- Set `public_url` to your HTTPS domain (e.g., `https://mcp.example.com`)
+- Generate a secret: `openssl rand -base64 32` and set `state_secret`
+- Add one or more `[[downstream]]` entries (see [docs/CONFIG.md](./docs/CONFIG.md))
+
+For chained OAuth (e.g., GitHub):
+- Register an OAuth App at the provider (e.g., https://github.com/settings/developers)
+- Set the callback URL to `https://your-domain.com/callback/mcp/<name>`
+- Put `oauth_client_id` and `oauth_client_secret` in config (or use env vars)
+
+### 3. Deploy with HTTPS
+
+Claude's connectors require HTTPS. Choose one of:
+
+**Option A: Behind Caddy (automatic TLS)**
+```
+# Caddyfile
+mcp.example.com {
+    reverse_proxy localhost:8080
+}
+```
+
+**Option B: Behind nginx**
+```nginx
+server {
+    listen 443 ssl;
+    server_name mcp.example.com;
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;  # Important for SSE
+    }
+}
+```
+
+**Option C: Cloudflare Tunnel (easiest)**
+```bash
+cloudflared tunnel --url http://localhost:8080
+```
+
+**Option D: Docker**
+```bash
+docker run -d \
+  -p 8080:8080 \
+  -v $(pwd)/config.toml:/etc/mcp-oauth-proxy/config.toml:ro \
+  -e MCP_PROXY_STATE_SECRET="$(openssl rand -base64 32)" \
+  mcp-oauth-proxy
+```
+
+### 4. Connect from Claude
+
+In Claude's connector settings, add your MCP URL:
+```
+https://mcp.example.com/mcp/github
+```
+
+Claude will automatically:
+1. Discover OAuth endpoints via `GET /.well-known/oauth-protected-resource/mcp/github`
+2. Redirect you to authorize (form for passthrough, or OAuth provider for chained)
+3. Exchange the authorization code for tokens
+4. Start making MCP requests through the proxy
+
+### 5. Health Check
+
+Verify the proxy is running:
+```bash
+curl https://mcp.example.com/health
+# Returns: OK
+```
+
+## Logging
+
+Control log level with `RUST_LOG`:
+
+```bash
+RUST_LOG=info ./target/release/mcp-oauth-proxy --config config.toml
+RUST_LOG=debug ./target/release/mcp-oauth-proxy --config config.toml
+```
+
+Logged events: request method + path, response status, downstream URL (on proxy), auth flow events (authorize, code issued, code exchanged, refresh proxied).
+
+Never logged: access tokens, refresh tokens, API keys, PKCE verifiers, state blobs.
+
+## Environment Variables
+
+| Variable | Overrides |
+|----------|-----------|
+| `RUST_LOG` | Log level (default: `info`) |
+| `MCP_PROXY_STATE_SECRET` | `server.state_secret` |
+| `MCP_PROXY_<NAME>_CLIENT_SECRET` | `downstream[name].oauth_client_secret` |
 
 ## Documentation
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — Detailed auth flows, component design, SSE proxying
-- [API_SPEC.md](./API_SPEC.md) — All HTTP endpoints with request/response formats
-- [CONFIG.md](./CONFIG.md) — Configuration file reference with examples
+- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — Auth flows, component design, SSE proxying
+- [docs/API-SPEC.md](./docs/API-SPEC.md) — All HTTP endpoints with request/response formats
+- [docs/CONFIG.md](./docs/CONFIG.md) — Configuration file reference
+- [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) — Development guide and testing

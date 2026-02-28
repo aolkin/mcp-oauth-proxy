@@ -2,6 +2,12 @@
 
 All endpoints use `<path_prefix>` to identify the downstream MCP. For example, if a downstream is configured with path `github`, the prefix is `/mcp/github`.
 
+## Health Check
+
+### GET `/health`
+
+Returns `200 OK` with body `OK`. Use for load balancer health checks and monitoring.
+
 ## Discovery Endpoints
 
 ### GET `/.well-known/oauth-protected-resource/<path_prefix>`
@@ -297,8 +303,8 @@ valid = (code_challenge_computed == stored_code_challenge)
 
 | Status | When |
 |--------|------|
-| 200 | Successful token exchange, successful MCP proxy |
-| 302 | All redirects (authorize → form/downstream, callback → Claude) |
+| 200 | Successful token exchange, successful MCP proxy, health check |
+| 303 | All redirects (authorize → form/downstream, callback → Claude) |
 | 400 | Invalid grant, bad request params, PKCE failure |
 | 401 | Missing/invalid bearer token on MCP endpoints |
 | 404 | Unknown path prefix |

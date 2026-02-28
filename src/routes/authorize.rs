@@ -59,6 +59,8 @@ pub async fn authorize_get(
             .into_response();
     }
 
+    tracing::info!(downstream = %name, strategy = ?ds.strategy, "Authorize request");
+
     match ds.strategy {
         Strategy::Passthrough => {
             let auth_hint = if ds.auth_hint.is_empty() {
@@ -207,6 +209,8 @@ pub async fn authorize_post(
         }
     };
 
+    tracing::info!(downstream = %name, "Auth code issued (passthrough)");
+
     let redirect_url = format!(
         "{}?code={}&state={}",
         form.redirect_uri,
@@ -310,6 +314,8 @@ pub async fn callback(
             return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response();
         }
     };
+
+    tracing::info!(downstream = %name, "Auth code issued (chained OAuth callback)");
 
     let redirect_url = format!(
         "{}?code={}&state={}",

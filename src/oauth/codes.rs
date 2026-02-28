@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Stateless encrypted authorization codes.
 //!
 //! Instead of an in-memory store, the authorization code itself is an AES-256-GCM

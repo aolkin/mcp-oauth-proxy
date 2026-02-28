@@ -6,6 +6,8 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::auth::chained_oauth;
+use crate::config::Strategy;
 use crate::oauth::codes::{self, DownstreamTokens};
 use crate::oauth::pkce;
 use crate::AppState;
@@ -18,7 +20,6 @@ pub struct TokenForm {
     redirect_uri: Option<String>,
     #[allow(dead_code)]
     client_id: Option<String>,
-    #[allow(dead_code)]
     refresh_token: Option<String>,
 }
 
@@ -36,7 +37,7 @@ pub async fn token(
     Path(name): Path<String>,
     Form(form): Form<TokenForm>,
 ) -> impl IntoResponse {
-    let Some(_ds) = state.find_downstream(&name) else {
+    let Some(ds) = state.find_downstream(&name) else {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "unknown downstream"})),
@@ -46,16 +47,21 @@ pub async fn token(
 
     match form.grant_type.as_str() {
         "authorization_code" => handle_authorization_code(&state, form).into_response(),
-        "refresh_token" => oauth_error(
-            StatusCode::BAD_REQUEST,
-            "unsupported_grant_type",
-            "refresh_token grant not supported for passthrough strategy",
-        )
-        .into_response(),
+        "refresh_token" => {
+            if ds.strategy != Strategy::ChainedOauth || !ds.oauth_supports_refresh {
+                return oauth_error(
+                    StatusCode::BAD_REQUEST,
+                    "unsupported_grant_type",
+                    "refresh_token grant not supported for this downstream",
+                )
+                .into_response();
+            }
+            handle_refresh_token(&state, ds, form).await.into_response()
+        }
         _ => oauth_error(
             StatusCode::BAD_REQUEST,
             "unsupported_grant_type",
-            "Supported grant types: authorization_code",
+            "Supported grant types: authorization_code, refresh_token",
         )
         .into_response(),
     }
@@ -138,4 +144,73 @@ fn handle_authorization_code(state: &AppState, form: TokenForm) -> impl IntoResp
             Json(resp).into_response()
         }
     }
+}
+
+async fn handle_refresh_token(
+    state: &AppState,
+    ds: &crate::config::DownstreamConfig,
+    form: TokenForm,
+) -> impl IntoResponse {
+    let Some(refresh_token) = &form.refresh_token else {
+        return oauth_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "refresh_token is required",
+        )
+        .into_response();
+    };
+
+    let body = match chained_oauth::post_downstream_token(
+        &state.http_client,
+        ds,
+        &[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token.as_str()),
+            ("client_id", ds.oauth_client_id.as_str()),
+            ("client_secret", ds.oauth_client_secret.as_str()),
+        ],
+    )
+    .await
+    {
+        Ok(body) => body,
+        Err(e) => {
+            tracing::error!(
+                downstream = %ds.name,
+                error = %e,
+                "Downstream refresh token request failed"
+            );
+            return oauth_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_grant",
+                "Refresh token invalid or expired. User must re-authorize.",
+            )
+            .into_response();
+        }
+    };
+
+    let Some(access_token) = body["access_token"].as_str() else {
+        tracing::error!(
+            downstream = %ds.name,
+            "Downstream refresh response missing access_token"
+        );
+        return oauth_error(
+            StatusCode::BAD_GATEWAY,
+            "server_error",
+            "Downstream returned invalid token response",
+        )
+        .into_response();
+    };
+
+    let mut result = json!({
+        "access_token": access_token,
+        "token_type": "Bearer"
+    });
+    if let Some(rt) = body["refresh_token"].as_str() {
+        result["refresh_token"] = json!(rt);
+    }
+    if let Some(ei) = body["expires_in"].as_u64() {
+        result["expires_in"] = json!(ei);
+    }
+
+    Json(result).into_response()
 }

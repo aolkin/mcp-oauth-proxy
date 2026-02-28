@@ -1,14 +1,10 @@
-use axum::routing::{get, post};
-use axum::Router;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use mcp_oauth_proxy::config;
-use mcp_oauth_proxy::routes;
-use mcp_oauth_proxy::AppState;
+use mcp_oauth_proxy::{build_router, config, AppState};
 
 /// MCP OAuth Proxy — bridges OAuth 2.1 for Claude's MCP connectors
 /// to downstream MCP servers using various auth strategies.
@@ -43,7 +39,6 @@ async fn main() {
         }
     };
 
-    // CLI --port overrides config
     if let Some(port) = cli.port {
         cfg.server.port = port;
     }
@@ -61,7 +56,6 @@ async fn main() {
         );
     }
 
-    // Decode state_secret from base64 (already validated by config loader)
     let state_secret = STANDARD
         .decode(&cfg.server.state_secret)
         .expect("state_secret base64 already validated");
@@ -75,30 +69,7 @@ async fn main() {
         http_client: reqwest::Client::new(),
     };
 
-    let app = Router::new()
-        // Discovery endpoints
-        .route(
-            "/.well-known/oauth-protected-resource/mcp/{name}",
-            get(routes::well_known::protected_resource),
-        )
-        .route(
-            "/.well-known/oauth-authorization-server/mcp/{name}",
-            get(routes::well_known::authorization_server),
-        )
-        // Authorization endpoints
-        .route(
-            "/authorize/mcp/{name}",
-            get(routes::authorize::authorize_get).post(routes::authorize::authorize_post),
-        )
-        .route("/callback/mcp/{name}", get(routes::authorize::callback))
-        // Token endpoint
-        .route("/token/mcp/{name}", post(routes::token::token))
-        // MCP proxy endpoints
-        .route(
-            "/mcp/{name}",
-            get(routes::mcp_proxy::mcp_sse).post(routes::mcp_proxy::mcp_post),
-        )
-        .with_state(state);
+    let app = build_router(state);
 
     tracing::info!("Listening on {bind_addr}");
     tracing::info!("Public URL: {public_url}");

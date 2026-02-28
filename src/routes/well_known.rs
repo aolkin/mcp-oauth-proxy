@@ -47,9 +47,9 @@ pub async fn authorization_server(
     let authorization_endpoint = format!("{public}/authorize/mcp/{}", ds.name);
     let token_endpoint = format!("{public}/token/mcp/{}", ds.name);
 
-    let grant_types = match ds.strategy {
-        Strategy::Passthrough => json!(["authorization_code"]),
-        Strategy::ChainedOauth => json!(["authorization_code", "refresh_token"]),
+    let grant_types = match (&ds.strategy, ds.oauth_supports_refresh) {
+        (Strategy::ChainedOauth, true) => json!(["authorization_code", "refresh_token"]),
+        _ => json!(["authorization_code"]),
     };
 
     Json(json!({

@@ -3,9 +3,12 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect};
 use axum::Form;
 use serde::Deserialize;
+use serde_json::json;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::config::Strategy;
+use crate::config::{DownstreamConfig, Strategy};
 use crate::oauth::codes::{self, DownstreamTokens};
+use crate::oauth::state;
 use crate::AppState;
 
 #[derive(Deserialize)]
@@ -117,11 +120,41 @@ pub async fn authorize_get(
 
             Html(html).into_response()
         }
-        Strategy::ChainedOauth => (
-            StatusCode::NOT_IMPLEMENTED,
-            "Chained OAuth not yet implemented",
-        )
-            .into_response(),
+        Strategy::ChainedOauth => {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+
+            let state_blob = json!({
+                "claude_state": oauth_state,
+                "claude_redirect_uri": redirect_uri,
+                "pkce_challenge": code_challenge,
+                "pkce_method": "S256",
+                "exp": now + 600,
+            });
+
+            let signed_state = state::sign_state(&state_blob, &state.state_secret);
+
+            let callback_url = format!(
+                "{}/callback/mcp/{}",
+                state.config.server.public_url, ds.name
+            );
+
+            let mut redirect_url = format!(
+                "{}?client_id={}&redirect_uri={}&state={}",
+                ds.oauth_authorize_url,
+                urlencoding::encode(&ds.oauth_client_id),
+                urlencoding::encode(&callback_url),
+                urlencoding::encode(&signed_state),
+            );
+
+            if !ds.oauth_scopes.is_empty() {
+                redirect_url.push_str(&format!("&scope={}", urlencoding::encode(&ds.oauth_scopes)));
+            }
+
+            Redirect::to(&redirect_url).into_response()
+        }
     }
 }
 
@@ -183,15 +216,171 @@ pub async fn authorize_post(
     Redirect::to(&redirect_url).into_response()
 }
 
+#[derive(Deserialize)]
+pub struct CallbackQuery {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+    error_description: Option<String>,
+}
+
 /// GET /callback/mcp/:name — OAuth provider callback (chained OAuth)
 pub async fn callback(
-    State(_state): State<AppState>,
-    Path(_name): Path<String>,
+    State(app): State<AppState>,
+    Path(name): Path<String>,
+    Query(params): Query<CallbackQuery>,
 ) -> impl IntoResponse {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        "Chained OAuth callback not yet implemented",
-    )
+    let Some(ds) = app.find_downstream(&name) else {
+        return (StatusCode::NOT_FOUND, "Unknown downstream").into_response();
+    };
+
+    if ds.strategy != Strategy::ChainedOauth {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Callback only supported for chained_oauth strategy",
+        )
+            .into_response();
+    }
+
+    if let Some(error) = &params.error {
+        let desc = params
+            .error_description
+            .as_deref()
+            .unwrap_or("Unknown error");
+        tracing::error!(
+            downstream = %ds.name,
+            error = %error,
+            description = %desc,
+            "Downstream OAuth provider returned an error"
+        );
+        return (
+            StatusCode::BAD_GATEWAY,
+            format!("Downstream authorization failed: {desc}"),
+        )
+            .into_response();
+    }
+
+    let Some(downstream_code) = &params.code else {
+        return (StatusCode::BAD_REQUEST, "Missing code parameter").into_response();
+    };
+
+    let Some(signed_state) = &params.state else {
+        return (StatusCode::BAD_REQUEST, "Missing state parameter").into_response();
+    };
+
+    let Some(state_payload) = state::verify_state(signed_state, &app.state_secret) else {
+        return (StatusCode::BAD_REQUEST, "Invalid or expired state").into_response();
+    };
+
+    let claude_state = state_payload["claude_state"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let claude_redirect_uri = state_payload["claude_redirect_uri"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let pkce_challenge = state_payload["pkce_challenge"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+
+    if claude_redirect_uri.is_empty() || pkce_challenge.is_empty() {
+        return (StatusCode::BAD_REQUEST, "Malformed state payload").into_response();
+    }
+
+    let tokens = match exchange_downstream_code(&app, ds, downstream_code, &name).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(
+                downstream = %ds.name,
+                error = %e,
+                "Failed to exchange downstream authorization code"
+            );
+            return (
+                StatusCode::BAD_GATEWAY,
+                format!("Token exchange failed: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    let code = match codes::create_auth_code(
+        tokens,
+        &pkce_challenge,
+        &claude_redirect_uri,
+        app.config.server.auth_code_ttl,
+        &app.state_secret,
+    ) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to create auth code: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response();
+        }
+    };
+
+    let redirect_url = format!(
+        "{}?code={}&state={}",
+        claude_redirect_uri,
+        urlencoding::encode(&code),
+        urlencoding::encode(&claude_state),
+    );
+
+    Redirect::to(&redirect_url).into_response()
+}
+
+async fn exchange_downstream_code(
+    app: &AppState,
+    ds: &DownstreamConfig,
+    code: &str,
+    name: &str,
+) -> Result<DownstreamTokens, String> {
+    let callback_url = format!("{}/callback/mcp/{}", app.config.server.public_url, name);
+
+    let resp = app
+        .http_client
+        .post(&ds.oauth_token_url)
+        .header("Accept", &ds.oauth_token_accept)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", ds.oauth_client_id.as_str()),
+            ("client_secret", ds.oauth_client_secret.as_str()),
+            ("code", code),
+            ("redirect_uri", callback_url.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("HTTP request failed: {e}"))?;
+
+    let status = resp.status();
+    let body: serde_json::Value = resp
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("Failed to parse token response: {e}"))?;
+
+    if !status.is_success() {
+        let err_desc = body["error_description"]
+            .as_str()
+            .or_else(|| body["error"].as_str())
+            .unwrap_or("unknown error");
+        return Err(format!(
+            "Downstream token endpoint returned {status}: {err_desc}"
+        ));
+    }
+
+    let access_token = body["access_token"]
+        .as_str()
+        .ok_or("Missing access_token in downstream response")?
+        .to_string();
+
+    let refresh_token = body["refresh_token"].as_str().map(String::from);
+    let expires_in = body["expires_in"].as_u64();
+
+    Ok(DownstreamTokens::ChainedOAuth {
+        access_token,
+        refresh_token,
+        expires_in,
+    })
 }
 
 fn html_escape(s: &str) -> String {

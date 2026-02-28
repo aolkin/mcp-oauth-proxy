@@ -72,13 +72,10 @@ pub struct DownstreamConfig {
     #[serde(default)]
     pub oauth_client_secret: String,
     #[serde(default)]
-    #[allow(dead_code)]
     pub oauth_scopes: String,
     #[serde(default)]
-    #[allow(dead_code)]
     pub oauth_supports_refresh: bool,
     #[serde(default = "default_oauth_token_accept")]
-    #[allow(dead_code)]
     pub oauth_token_accept: String,
 }
 

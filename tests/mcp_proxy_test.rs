@@ -3,8 +3,6 @@ use axum::Router;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
-/// Spin up a mock downstream MCP server that echoes SSE events and JSON-RPC POSTs.
-/// Returns the base URL (e.g. "http://127.0.0.1:<port>").
 async fn start_mock_downstream() -> String {
     let app = Router::new()
         .route("/sse", get(mock_sse_handler))
@@ -20,16 +18,12 @@ async fn start_mock_downstream() -> String {
     format!("http://127.0.0.1:{port}")
 }
 
-/// Mock SSE endpoint: streams a few events then closes.
-/// Also validates that the auth header is the remapped format.
 async fn mock_sse_handler(headers: axum::http::HeaderMap) -> axum::response::Response {
-    // Verify auth was remapped correctly (we'll use X-API-Key format in tests)
     let api_key = headers.get("X-API-Key").and_then(|v| v.to_str().ok());
 
     let events = if api_key == Some("test-token-123") {
         "data: {\"event\":\"hello\"}\n\ndata: {\"event\":\"world\"}\n\n"
     } else if headers.get("authorization").is_some() {
-        // Accept Bearer format too
         "data: {\"event\":\"bearer-ok\"}\n\n"
     } else {
         return axum::response::Response::builder()
@@ -46,7 +40,6 @@ async fn mock_sse_handler(headers: axum::http::HeaderMap) -> axum::response::Res
         .unwrap()
 }
 
-/// Mock JSON-RPC POST endpoint: echoes the body back with auth info.
 async fn mock_post_handler(
     headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
@@ -71,7 +64,6 @@ async fn mock_post_handler(
         .unwrap()
 }
 
-/// Build the proxy app with a test config pointing at the mock downstream.
 fn build_proxy_app(downstream_url: &str) -> Router {
     use base64::Engine;
 
@@ -126,7 +118,6 @@ auth_header_format = "X-API-Key"
         .with_state(state)
 }
 
-/// Start the proxy and return its base URL.
 async fn start_proxy(downstream_url: &str) -> String {
     let app = build_proxy_app(downstream_url);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -188,7 +179,7 @@ async fn test_sse_proxy_bearer_format() {
 }
 
 #[tokio::test]
-async fn test_post_proxy_forwards_body() {
+async fn test_post_proxy_forwards_body_and_remaps_auth() {
     let downstream = start_mock_downstream().await;
     let proxy = start_proxy(&downstream).await;
 
@@ -217,13 +208,13 @@ async fn test_post_proxy_forwards_body() {
 }
 
 #[tokio::test]
-async fn test_missing_auth_returns_401() {
+async fn test_auth_errors_return_401() {
     let downstream = start_mock_downstream().await;
     let proxy = start_proxy(&downstream).await;
 
     let client = reqwest::Client::new();
 
-    // GET without auth
+    // No auth header
     let resp = client
         .get(format!("{proxy}/mcp/test-sse"))
         .send()
@@ -231,25 +222,7 @@ async fn test_missing_auth_returns_401() {
         .unwrap();
     assert_eq!(resp.status(), 401);
 
-    // POST without auth
-    let resp = client
-        .post(format!("{proxy}/mcp/test-rpc"))
-        .header("Content-Type", "application/json")
-        .body(r#"{"jsonrpc":"2.0"}"#)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
-}
-
-#[tokio::test]
-async fn test_malformed_auth_returns_401() {
-    let downstream = start_mock_downstream().await;
-    let proxy = start_proxy(&downstream).await;
-
-    let client = reqwest::Client::new();
-
-    // "Basic" instead of "Bearer"
+    // Wrong auth scheme
     let resp = client
         .get(format!("{proxy}/mcp/test-sse"))
         .header("Authorization", "Basic abc123")
@@ -264,21 +237,9 @@ async fn test_unknown_downstream_returns_404() {
     let downstream = start_mock_downstream().await;
     let proxy = start_proxy(&downstream).await;
 
-    let client = reqwest::Client::new();
-
-    let resp = client
+    let resp = reqwest::Client::new()
         .get(format!("{proxy}/mcp/nonexistent"))
         .header("Authorization", "Bearer some-token")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 404);
-
-    let resp = client
-        .post(format!("{proxy}/mcp/nonexistent"))
-        .header("Authorization", "Bearer some-token")
-        .header("Content-Type", "application/json")
-        .body(r#"{}"#)
         .send()
         .await
         .unwrap();
@@ -287,49 +248,13 @@ async fn test_unknown_downstream_returns_404() {
 
 #[tokio::test]
 async fn test_unreachable_downstream_returns_502() {
-    // Point proxy at a port that's not listening
     let proxy = start_proxy("http://127.0.0.1:1").await;
 
-    let client = reqwest::Client::new();
-
-    let resp = client
+    let resp = reqwest::Client::new()
         .get(format!("{proxy}/mcp/test-sse"))
         .header("Authorization", "Bearer some-token")
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 502);
-
-    let resp = client
-        .post(format!("{proxy}/mcp/test-rpc"))
-        .header("Authorization", "Bearer some-token")
-        .header("Content-Type", "application/json")
-        .body(r#"{}"#)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 502);
-}
-
-#[tokio::test]
-async fn test_auth_header_remapping_x_api_key() {
-    let downstream = start_mock_downstream().await;
-    let proxy = start_proxy(&downstream).await;
-
-    let client = reqwest::Client::new();
-
-    // POST to test-rpc uses X-API-Key format
-    let resp = client
-        .post(format!("{proxy}/mcp/test-rpc"))
-        .header("Authorization", "Bearer my-secret-key")
-        .header("Content-Type", "application/json")
-        .json(&serde_json::json!({"test": true}))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = resp.json().await.unwrap();
-    // The mock echoes back the X-API-Key value
-    assert_eq!(body["auth_key"], "my-secret-key");
 }

@@ -6,6 +6,7 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::auth::chained_oauth;
 use crate::config::Strategy;
 use crate::oauth::codes::{self, DownstreamTokens};
 use crate::oauth::pkce;
@@ -47,11 +48,11 @@ pub async fn token(
     match form.grant_type.as_str() {
         "authorization_code" => handle_authorization_code(&state, form).into_response(),
         "refresh_token" => {
-            if ds.strategy != Strategy::ChainedOauth {
+            if ds.strategy != Strategy::ChainedOauth || !ds.oauth_supports_refresh {
                 return oauth_error(
                     StatusCode::BAD_REQUEST,
                     "unsupported_grant_type",
-                    "refresh_token grant not supported for passthrough strategy",
+                    "refresh_token grant not supported for this downstream",
                 )
                 .into_response();
             }
@@ -159,79 +160,51 @@ async fn handle_refresh_token(
         .into_response();
     };
 
-    let resp = match state
-        .http_client
-        .post(&ds.oauth_token_url)
-        .header("Accept", &ds.oauth_token_accept)
-        .form(&[
+    let body = match chained_oauth::post_downstream_token(
+        &state.http_client,
+        ds,
+        &[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token.as_str()),
             ("client_id", ds.oauth_client_id.as_str()),
             ("client_secret", ds.oauth_client_secret.as_str()),
-        ])
-        .send()
-        .await
+        ],
+    )
+    .await
     {
-        Ok(r) => r,
+        Ok(body) => body,
         Err(e) => {
             tracing::error!(
                 downstream = %ds.name,
                 error = %e,
-                "Failed to reach downstream token endpoint for refresh"
+                "Downstream refresh token request failed"
             );
             return oauth_error(
-                StatusCode::BAD_GATEWAY,
-                "server_error",
-                "Failed to reach downstream token endpoint",
+                StatusCode::BAD_REQUEST,
+                "invalid_grant",
+                "Refresh token invalid or expired. User must re-authorize.",
             )
             .into_response();
         }
     };
 
-    let status = resp.status();
-    let body: serde_json::Value = match resp.json::<serde_json::Value>().await {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!(
-                downstream = %ds.name,
-                error = %e,
-                "Failed to parse downstream refresh response"
-            );
-            return oauth_error(
-                StatusCode::BAD_GATEWAY,
-                "server_error",
-                "Failed to parse downstream token response",
-            )
-            .into_response();
-        }
-    };
-
-    if !status.is_success() {
-        let err_desc = body["error_description"]
-            .as_str()
-            .or_else(|| body["error"].as_str())
-            .unwrap_or("unknown error");
+    let Some(access_token) = body["access_token"].as_str() else {
         tracing::error!(
             downstream = %ds.name,
-            status = %status,
-            error = %err_desc,
-            "Downstream refresh token request failed"
+            "Downstream refresh response missing access_token"
         );
         return oauth_error(
-            StatusCode::BAD_REQUEST,
-            "invalid_grant",
-            "Refresh token invalid or expired. User must re-authorize.",
+            StatusCode::BAD_GATEWAY,
+            "server_error",
+            "Downstream returned invalid token response",
         )
         .into_response();
-    }
+    };
 
     let mut result = json!({
+        "access_token": access_token,
         "token_type": "Bearer"
     });
-
-    if let Some(at) = body["access_token"].as_str() {
-        result["access_token"] = json!(at);
-    }
     if let Some(rt) = body["refresh_token"].as_str() {
         result["refresh_token"] = json!(rt);
     }

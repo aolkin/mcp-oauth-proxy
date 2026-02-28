@@ -244,6 +244,10 @@ async fn test_authorize_redirects_to_downstream() {
         "should include callback redirect_uri"
     );
     assert!(location.contains("state="), "should include signed state");
+    assert!(
+        location.contains("response_type=code"),
+        "should include response_type=code"
+    );
 }
 
 #[tokio::test]

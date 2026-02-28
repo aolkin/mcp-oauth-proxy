@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /// Remap a bearer token into the downstream auth header format.
 ///
 /// Given a downstream's `auth_header_format` config and the user's token,

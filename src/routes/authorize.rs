@@ -6,7 +6,8 @@ use serde::Deserialize;
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::config::{DownstreamConfig, Strategy};
+use crate::auth::chained_oauth;
+use crate::config::Strategy;
 use crate::oauth::codes::{self, DownstreamTokens};
 use crate::oauth::state;
 use crate::AppState;
@@ -142,7 +143,7 @@ pub async fn authorize_get(
             );
 
             let mut redirect_url = format!(
-                "{}?client_id={}&redirect_uri={}&state={}",
+                "{}?response_type=code&client_id={}&redirect_uri={}&state={}",
                 ds.oauth_authorize_url,
                 urlencoding::encode(&ds.oauth_client_id),
                 urlencoding::encode(&callback_url),
@@ -272,22 +273,13 @@ pub async fn callback(
         return (StatusCode::BAD_REQUEST, "Invalid or expired state").into_response();
     };
 
-    let claude_state = state_payload["claude_state"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
-    let claude_redirect_uri = state_payload["claude_redirect_uri"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
-    let pkce_challenge = state_payload["pkce_challenge"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
-
-    if claude_redirect_uri.is_empty() || pkce_challenge.is_empty() {
+    let (Some(claude_state), Some(claude_redirect_uri), Some(pkce_challenge)) = (
+        state_payload["claude_state"].as_str(),
+        state_payload["claude_redirect_uri"].as_str(),
+        state_payload["pkce_challenge"].as_str(),
+    ) else {
         return (StatusCode::BAD_REQUEST, "Malformed state payload").into_response();
-    }
+    };
 
     let tokens = match exchange_downstream_code(&app, ds, downstream_code, &name).await {
         Ok(t) => t,
@@ -307,8 +299,8 @@ pub async fn callback(
 
     let code = match codes::create_auth_code(
         tokens,
-        &pkce_challenge,
-        &claude_redirect_uri,
+        pkce_challenge,
+        claude_redirect_uri,
         app.config.server.auth_code_ttl,
         &app.state_secret,
     ) {
@@ -323,7 +315,7 @@ pub async fn callback(
         "{}?code={}&state={}",
         claude_redirect_uri,
         urlencoding::encode(&code),
-        urlencoding::encode(&claude_state),
+        urlencoding::encode(claude_state),
     );
 
     Redirect::to(&redirect_url).into_response()
@@ -331,42 +323,24 @@ pub async fn callback(
 
 async fn exchange_downstream_code(
     app: &AppState,
-    ds: &DownstreamConfig,
+    ds: &crate::config::DownstreamConfig,
     code: &str,
     name: &str,
 ) -> Result<DownstreamTokens, String> {
     let callback_url = format!("{}/callback/mcp/{}", app.config.server.public_url, name);
 
-    let resp = app
-        .http_client
-        .post(&ds.oauth_token_url)
-        .header("Accept", &ds.oauth_token_accept)
-        .form(&[
+    let body = chained_oauth::post_downstream_token(
+        &app.http_client,
+        ds,
+        &[
             ("grant_type", "authorization_code"),
             ("client_id", ds.oauth_client_id.as_str()),
             ("client_secret", ds.oauth_client_secret.as_str()),
             ("code", code),
             ("redirect_uri", callback_url.as_str()),
-        ])
-        .send()
-        .await
-        .map_err(|e| format!("HTTP request failed: {e}"))?;
-
-    let status = resp.status();
-    let body: serde_json::Value = resp
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|e| format!("Failed to parse token response: {e}"))?;
-
-    if !status.is_success() {
-        let err_desc = body["error_description"]
-            .as_str()
-            .or_else(|| body["error"].as_str())
-            .unwrap_or("unknown error");
-        return Err(format!(
-            "Downstream token endpoint returned {status}: {err_desc}"
-        ));
-    }
+        ],
+    )
+    .await?;
 
     let access_token = body["access_token"]
         .as_str()

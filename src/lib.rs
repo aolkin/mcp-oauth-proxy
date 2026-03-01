@@ -7,6 +7,7 @@ pub mod routes;
 use axum::routing::{get, post};
 use axum::Router;
 use std::sync::Arc;
+use tower_http::trace::TraceLayer;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -21,8 +22,13 @@ impl AppState {
     }
 }
 
+async fn health() -> &'static str {
+    "OK"
+}
+
 pub fn build_router(state: AppState) -> Router {
     Router::new()
+        .route("/health", get(health))
         .route(
             "/.well-known/oauth-protected-resource/mcp/{name}",
             get(routes::well_known::protected_resource),
@@ -41,5 +47,6 @@ pub fn build_router(state: AppState) -> Router {
             "/mcp/{name}",
             get(routes::mcp_proxy::mcp_sse).post(routes::mcp_proxy::mcp_post),
         )
+        .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

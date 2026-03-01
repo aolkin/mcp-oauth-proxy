@@ -30,6 +30,8 @@ pub async fn mcp_sse(
     let token = extract_bearer_token(&headers)?;
     let (header_name, header_value) = headers::remap_auth_header(&ds.auth_header_format, token);
 
+    tracing::debug!(downstream = %name, downstream_url = %ds.downstream_url, "SSE proxy");
+
     sse::proxy_sse(
         &ds.downstream_url,
         &header_name,
@@ -50,6 +52,8 @@ pub async fn mcp_post(
 
     let token = extract_bearer_token(&headers)?;
     let (header_name, header_value) = headers::remap_auth_header(&ds.auth_header_format, token);
+
+    tracing::debug!(downstream = %name, downstream_url = %ds.downstream_url, "POST proxy");
 
     sse::proxy_post(
         &ds.downstream_url,

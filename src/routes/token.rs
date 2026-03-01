@@ -45,6 +45,8 @@ pub async fn token(
             .into_response();
     };
 
+    tracing::info!(downstream = %name, grant_type = %form.grant_type, "Token request");
+
     match form.grant_type.as_str() {
         "authorization_code" => handle_authorization_code(&state, form).into_response(),
         "refresh_token" => {
@@ -119,6 +121,8 @@ fn handle_authorization_code(state: &AppState, form: TokenForm) -> impl IntoResp
         )
         .into_response();
     }
+
+    tracing::info!("Auth code exchanged for tokens");
 
     match grant.downstream_tokens {
         DownstreamTokens::Passthrough { access_token } => Json(json!({
@@ -200,6 +204,8 @@ async fn handle_refresh_token(
         )
         .into_response();
     };
+
+    tracing::info!(downstream = %ds.name, "Refresh token proxied");
 
     let mut result = json!({
         "access_token": access_token,

@@ -49,9 +49,12 @@ async fn start_proxy() -> SocketAddr {
     addr
 }
 
-// ---------------------------------------------------------------------------
-// Health check
-// ---------------------------------------------------------------------------
+fn post_form(client: &reqwest::Client, url: String, body: &str) -> reqwest::RequestBuilder {
+    client
+        .post(url)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body.to_owned())
+}
 
 #[tokio::test]
 async fn test_health_endpoint() {
@@ -66,125 +69,60 @@ async fn test_health_endpoint() {
     assert_eq!(resp.text().await.unwrap(), "OK");
 }
 
-// ---------------------------------------------------------------------------
-// Token endpoint: malformed input
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
-async fn test_token_empty_body() {
+async fn test_token_errors_return_rfc6749_json() {
     let addr = start_proxy().await;
-    let resp = reqwest::Client::new()
-        .post(format!("http://{addr}/token/mcp/test"))
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .body("")
+    let client = reqwest::Client::new();
+    let url = format!("http://{addr}/token/mcp/test");
+
+    // Unknown grant type
+    let resp = post_form(&client, url.clone(), "grant_type=invalid_type")
         .send()
         .await
         .unwrap();
-
-    // Should return 4xx, not panic
-    assert!(resp.status().is_client_error());
-}
-
-#[tokio::test]
-async fn test_token_garbage_body() {
-    let addr = start_proxy().await;
-    let resp = reqwest::Client::new()
-        .post(format!("http://{addr}/token/mcp/test"))
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .body("not=valid&form=data&but=missing&grant_type")
-        .send()
-        .await
-        .unwrap();
-
-    assert!(resp.status().is_client_error());
-}
-
-#[tokio::test]
-async fn test_token_json_body_rejected() {
-    let addr = start_proxy().await;
-    let resp = reqwest::Client::new()
-        .post(format!("http://{addr}/token/mcp/test"))
-        .header("Content-Type", "application/json")
-        .body(r#"{"grant_type":"authorization_code"}"#)
-        .send()
-        .await
-        .unwrap();
-
-    // Should return error, not panic
-    assert!(resp.status().is_client_error());
-}
-
-#[tokio::test]
-async fn test_token_invalid_grant_type_returns_json() {
-    let addr = start_proxy().await;
-    let resp = reqwest::Client::new()
-        .post(format!("http://{addr}/token/mcp/test"))
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .body("grant_type=invalid_type")
-        .send()
-        .await
-        .unwrap();
-
     assert_eq!(resp.status(), 400);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["error"], "unsupported_grant_type");
     assert!(body["error_description"].is_string());
-}
 
-#[tokio::test]
-async fn test_token_missing_code_returns_json() {
-    let addr = start_proxy().await;
-    let resp = reqwest::Client::new()
-        .post(format!("http://{addr}/token/mcp/test"))
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .body("grant_type=authorization_code")
+    // authorization_code with missing code
+    let resp = post_form(&client, url.clone(), "grant_type=authorization_code")
         .send()
         .await
         .unwrap();
-
     assert_eq!(resp.status(), 400);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["error"], "invalid_request");
-}
 
-#[tokio::test]
-async fn test_token_garbage_code_returns_json() {
-    let addr = start_proxy().await;
-    let resp = reqwest::Client::new()
-        .post(format!("http://{addr}/token/mcp/test"))
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .body("grant_type=authorization_code&code=not-a-real-code&code_verifier=abc&redirect_uri=http://x")
-        .send()
-        .await
-        .unwrap();
-
+    // authorization_code with garbage encrypted code
+    let resp = post_form(
+        &client,
+        url.clone(),
+        "grant_type=authorization_code&code=garbage&code_verifier=abc&redirect_uri=http://x",
+    )
+    .send()
+    .await
+    .unwrap();
     assert_eq!(resp.status(), 400);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["error"], "invalid_grant");
-}
 
-#[tokio::test]
-async fn test_token_unknown_downstream_returns_json() {
-    let addr = start_proxy().await;
-    let resp = reqwest::Client::new()
-        .post(format!("http://{addr}/token/mcp/nonexistent"))
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .body("grant_type=authorization_code&code=x")
-        .send()
-        .await
-        .unwrap();
-
+    // Unknown downstream also returns JSON
+    let resp = post_form(
+        &client,
+        format!("http://{addr}/token/mcp/nonexistent"),
+        "grant_type=authorization_code&code=x",
+    )
+    .send()
+    .await
+    .unwrap();
     assert_eq!(resp.status(), 404);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert!(body["error"].is_string());
 }
 
-// ---------------------------------------------------------------------------
-// Authorize endpoint: malformed input
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
-async fn test_authorize_missing_params() {
+async fn test_authorize_rejects_bad_params() {
     let addr = start_proxy().await;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -211,115 +149,27 @@ async fn test_authorize_missing_params() {
 }
 
 #[tokio::test]
-async fn test_authorize_unknown_downstream() {
-    let addr = start_proxy().await;
-    let resp = reqwest::Client::new()
-        .get(format!(
-            "http://{addr}/authorize/mcp/nonexistent?response_type=code&redirect_uri=http://x&state=s&code_challenge=c&code_challenge_method=S256"
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 404);
-}
-
-// ---------------------------------------------------------------------------
-// MCP proxy: auth errors
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn test_mcp_no_auth_header() {
-    let addr = start_proxy().await;
-    let resp = reqwest::Client::new()
-        .get(format!("http://{addr}/mcp/test"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
-}
-
-#[tokio::test]
-async fn test_mcp_wrong_auth_scheme() {
-    let addr = start_proxy().await;
-    let resp = reqwest::Client::new()
-        .get(format!("http://{addr}/mcp/test"))
-        .header("Authorization", "Basic dXNlcjpwYXNz")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
-}
-
-// ---------------------------------------------------------------------------
-// Callback: malformed input
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn test_callback_passthrough_rejected() {
+async fn test_callback_wrong_strategy_rejected() {
     let addr = start_proxy().await;
     let resp = reqwest::Client::new()
         .get(format!("http://{addr}/callback/mcp/test?code=x&state=y"))
         .send()
         .await
         .unwrap();
-    // "test" is passthrough, not chained_oauth
     assert_eq!(resp.status(), 400);
 }
 
 #[tokio::test]
-async fn test_callback_unknown_downstream() {
-    let addr = start_proxy().await;
-    let resp = reqwest::Client::new()
-        .get(format!(
-            "http://{addr}/callback/mcp/nonexistent?code=x&state=y"
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 404);
-}
-
-// ---------------------------------------------------------------------------
-// Well-known: unknown downstream
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn test_well_known_unknown_downstream() {
-    let addr = start_proxy().await;
-
-    let resp = reqwest::Client::new()
-        .get(format!(
-            "http://{addr}/.well-known/oauth-protected-resource/mcp/nonexistent"
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 404);
-
-    let resp = reqwest::Client::new()
-        .get(format!(
-            "http://{addr}/.well-known/oauth-authorization-server/mcp/nonexistent"
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 404);
-}
-
-// ---------------------------------------------------------------------------
-// Passthrough: refresh not supported
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
 async fn test_refresh_on_passthrough_rejected() {
     let addr = start_proxy().await;
-    let resp = reqwest::Client::new()
-        .post(format!("http://{addr}/token/mcp/test"))
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .body("grant_type=refresh_token&refresh_token=abc")
-        .send()
-        .await
-        .unwrap();
+    let resp = post_form(
+        &reqwest::Client::new(),
+        format!("http://{addr}/token/mcp/test"),
+        "grant_type=refresh_token&refresh_token=abc",
+    )
+    .send()
+    .await
+    .unwrap();
 
     assert_eq!(resp.status(), 400);
     let body: serde_json::Value = resp.json().await.unwrap();

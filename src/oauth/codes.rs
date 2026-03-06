@@ -26,6 +26,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const NONCE_SIZE: usize = 12;
+
 /// Tokens embedded inside the encrypted authorization code.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -93,8 +95,7 @@ pub fn create_auth_code(
         .encrypt(&nonce, plaintext.as_ref())
         .map_err(|e| format!("encryption failed: {e}"))?;
 
-    // Wire format: nonce (12 bytes) || ciphertext+tag
-    let mut blob = Vec::with_capacity(12 + ciphertext.len());
+    let mut blob = Vec::with_capacity(NONCE_SIZE + ciphertext.len());
     blob.extend_from_slice(&nonce);
     blob.extend_from_slice(&ciphertext);
 
@@ -118,12 +119,11 @@ pub fn validate_auth_code(code: &str, state_secret: &[u8]) -> Result<ValidatedGr
         .decode(code)
         .map_err(|_| "invalid authorization code encoding")?;
 
-    if blob.len() < 13 {
-        // 12 bytes nonce + at least 1 byte ciphertext
+    if blob.len() < NONCE_SIZE + 1 {
         return Err("authorization code too short");
     }
 
-    let (nonce_bytes, ciphertext) = blob.split_at(12);
+    let (nonce_bytes, ciphertext) = blob.split_at(NONCE_SIZE);
     let nonce = Nonce::from_slice(nonce_bytes);
 
     let key = derive_key(state_secret);

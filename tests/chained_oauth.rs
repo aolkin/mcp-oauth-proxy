@@ -184,11 +184,7 @@ async fn start_proxy(mock_addr: &SocketAddr) -> SocketAddr {
         .decode(&config.server.state_secret)
         .expect("base64 decode");
 
-    let state = mcp_oauth_proxy::AppState {
-        config: Arc::new(config),
-        state_secret,
-        http_client: reqwest::Client::new(),
-    };
+    let state = mcp_oauth_proxy::AppState::new(config, state_secret, reqwest::Client::new());
 
     let app = mcp_oauth_proxy::build_router(state);
     tokio::spawn(axum::serve(listener, app).into_future());

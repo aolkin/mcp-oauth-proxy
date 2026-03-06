@@ -2,7 +2,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use clap::Parser;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::time::Duration;
 
 use mcp_oauth_proxy::{build_router, config, AppState};
 
@@ -63,11 +63,13 @@ async fn main() {
     let bind_addr = format!("{}:{}", cfg.server.host, cfg.server.port);
     let public_url = cfg.server.public_url.clone();
 
-    let state = AppState {
-        config: Arc::new(cfg),
-        state_secret,
-        http_client: reqwest::Client::new(),
-    };
+    let http_client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(600))
+        .build()
+        .expect("failed to build HTTP client");
+
+    let state = AppState::new(cfg, state_secret, http_client);
 
     let app = build_router(state);
 

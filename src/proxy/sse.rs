@@ -19,10 +19,20 @@ pub async fn proxy_sse(
         .header("Accept", "text/event-stream")
         .send()
         .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+        .map_err(|e| {
+            tracing::error!(url = %downstream_url, error = %e, "Failed to connect to downstream");
+            StatusCode::BAD_GATEWAY
+        })?;
 
     if !resp.status().is_success() {
-        return Err(StatusCode::BAD_GATEWAY);
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        tracing::error!(url = %downstream_url, status = %status, body = %body, "Downstream returned error");
+        return Response::builder()
+            .status(StatusCode::BAD_GATEWAY)
+            .header("Content-Type", "text/plain")
+            .body(Body::from(format!("Downstream returned {status}")))
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     let stream = resp.bytes_stream();
@@ -50,10 +60,24 @@ pub async fn proxy_post(
         .body(body)
         .send()
         .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+        .map_err(|e| {
+            tracing::error!(url = %downstream_url, error = %e, "Failed to connect to downstream");
+            StatusCode::BAD_GATEWAY
+        })?;
 
     if !resp.status().is_success() {
-        return Err(StatusCode::BAD_GATEWAY);
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let body_bytes = resp.bytes().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+        tracing::error!(url = %downstream_url, status = %status, "Downstream returned error");
+
+        let mut builder = Response::builder().status(StatusCode::BAD_GATEWAY);
+        if let Some(ct) = headers.get("content-type") {
+            builder = builder.header("Content-Type", ct);
+        }
+        return builder
+            .body(Body::from(body_bytes))
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     let status = resp.status();

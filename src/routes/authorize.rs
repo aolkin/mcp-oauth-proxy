@@ -12,6 +12,8 @@ use crate::oauth::codes::{self, DownstreamTokens};
 use crate::oauth::state;
 use crate::AppState;
 
+const OAUTH_STATE_TTL_SECS: u64 = 600;
+
 #[derive(Deserialize)]
 pub struct AuthorizeQuery {
     response_type: Option<String>,
@@ -134,7 +136,7 @@ pub async fn authorize_get(
                 "claude_redirect_uri": redirect_uri,
                 "pkce_challenge": code_challenge,
                 "pkce_method": "S256",
-                "exp": now + 600,
+                "exp": now + OAUTH_STATE_TTL_SECS,
             });
 
             let signed_state = state::sign_state(&state_blob, &state.state_secret);

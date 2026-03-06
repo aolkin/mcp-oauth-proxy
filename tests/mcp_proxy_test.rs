@@ -1,6 +1,5 @@
 use axum::routing::{get, post};
 use axum::Router;
-use std::sync::Arc;
 use tokio::net::TcpListener;
 
 async fn start_mock_downstream() -> String {
@@ -103,11 +102,7 @@ auth_header_format = "X-API-Key"
         .decode(&config.server.state_secret)
         .unwrap();
 
-    let state = mcp_oauth_proxy::AppState {
-        config: Arc::new(config),
-        state_secret,
-        http_client: reqwest::Client::new(),
-    };
+    let state = mcp_oauth_proxy::AppState::new(config, state_secret, reqwest::Client::new());
 
     Router::new()
         .route(

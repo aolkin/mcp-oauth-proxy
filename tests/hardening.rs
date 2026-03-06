@@ -2,8 +2,6 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use std::future::IntoFuture;
 use std::net::SocketAddr;
-use std::sync::Arc;
-
 fn test_secret() -> String {
     STANDARD.encode([0xAA_u8; 32])
 }
@@ -37,11 +35,7 @@ async fn start_proxy() -> SocketAddr {
         .decode(&config.server.state_secret)
         .expect("base64 decode");
 
-    let state = mcp_oauth_proxy::AppState {
-        config: Arc::new(config),
-        state_secret,
-        http_client: reqwest::Client::new(),
-    };
+    let state = mcp_oauth_proxy::AppState::new(config, state_secret, reqwest::Client::new());
 
     let app = mcp_oauth_proxy::build_router(state);
     tokio::spawn(axum::serve(listener, app).into_future());

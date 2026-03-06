@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 /// Verify a PKCE code_verifier against a stored S256 challenge.
 ///
 /// Computes `base64url_no_pad(sha256(code_verifier))` and compares
-/// it to the stored challenge using constant-time-ish equality.
+/// it to the stored challenge.
 pub fn verify_pkce(code_verifier: &str, stored_challenge: &str) -> bool {
     let hash = Sha256::digest(code_verifier.as_bytes());
     let computed = URL_SAFE_NO_PAD.encode(hash);

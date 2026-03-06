@@ -220,7 +220,28 @@ fn validate_downstreams(downstreams: &[DownstreamConfig]) -> Result<(), String> 
             ));
         }
 
-        // Strategy-specific validation
+        if ds.strategy == Strategy::Passthrough {
+            let oauth_fields_set: Vec<&str> = [
+                ("oauth_authorize_url", ds.oauth_authorize_url.as_str()),
+                ("oauth_token_url", ds.oauth_token_url.as_str()),
+                ("oauth_client_id", ds.oauth_client_id.as_str()),
+                ("oauth_client_secret", ds.oauth_client_secret.as_str()),
+                ("oauth_scopes", ds.oauth_scopes.as_str()),
+            ]
+            .iter()
+            .filter(|(_, v)| !v.is_empty())
+            .map(|(k, _)| *k)
+            .collect();
+
+            if !oauth_fields_set.is_empty() {
+                tracing::warn!(
+                    downstream = %ds.name,
+                    fields = %oauth_fields_set.join(", "),
+                    "Passthrough downstream has oauth_* fields set (these are ignored)"
+                );
+            }
+        }
+
         if ds.strategy == Strategy::ChainedOauth {
             let missing: Vec<&str> = [
                 ("oauth_authorize_url", ds.oauth_authorize_url.as_str()),

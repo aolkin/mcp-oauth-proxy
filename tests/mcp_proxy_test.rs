@@ -209,6 +209,14 @@ async fn test_auth_errors_return_401() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 401);
+    assert_eq!(
+        resp.headers()
+            .get("www-authenticate")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "Bearer"
+    );
 
     // Wrong auth scheme
     let resp = client
@@ -218,6 +226,14 @@ async fn test_auth_errors_return_401() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 401);
+    assert_eq!(
+        resp.headers()
+            .get("www-authenticate")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "Bearer"
+    );
 }
 
 #[tokio::test]

@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::auth::chained_oauth;
-use crate::config::StrategyConfig;
+use crate::config::{OAuthConfig, StrategyConfig};
 use crate::oauth::codes::{self, DownstreamTokens};
 use crate::oauth::pkce;
 use crate::AppState;
@@ -50,15 +50,7 @@ pub async fn token(
     match form.grant_type.as_str() {
         "authorization_code" => handle_authorization_code(&state, form).into_response(),
         "refresh_token" => {
-            let StrategyConfig::ChainedOauth {
-                oauth_supports_refresh: true,
-                oauth_token_url,
-                oauth_client_id,
-                oauth_client_secret,
-                oauth_token_accept,
-                ..
-            } = &ds.strategy
-            else {
+            let StrategyConfig::ChainedOauth { oauth } = &ds.strategy else {
                 return oauth_error(
                     StatusCode::BAD_REQUEST,
                     "unsupported_grant_type",
@@ -66,17 +58,17 @@ pub async fn token(
                 )
                 .into_response();
             };
-            handle_refresh_token(
-                &state,
-                &name,
-                oauth_token_url,
-                oauth_client_id,
-                oauth_client_secret,
-                oauth_token_accept,
-                form,
-            )
-            .await
-            .into_response()
+            if !oauth.oauth_supports_refresh {
+                return oauth_error(
+                    StatusCode::BAD_REQUEST,
+                    "unsupported_grant_type",
+                    "refresh_token grant not supported for this downstream",
+                )
+                .into_response();
+            }
+            handle_refresh_token(&state, &name, oauth, form)
+                .await
+                .into_response()
         }
         _ => oauth_error(
             StatusCode::BAD_REQUEST,
@@ -171,10 +163,7 @@ fn handle_authorization_code(state: &AppState, form: TokenForm) -> impl IntoResp
 async fn handle_refresh_token(
     state: &AppState,
     ds_name: &str,
-    oauth_token_url: &str,
-    oauth_client_id: &str,
-    oauth_client_secret: &str,
-    oauth_token_accept: &str,
+    oauth: &OAuthConfig,
     form: TokenForm,
 ) -> impl IntoResponse {
     let Some(refresh_token) = &form.refresh_token else {
@@ -188,13 +177,12 @@ async fn handle_refresh_token(
 
     let body = match chained_oauth::post_downstream_token(
         &state.http_client,
-        oauth_token_url,
-        oauth_token_accept,
+        oauth,
         &[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token.as_str()),
-            ("client_id", oauth_client_id),
-            ("client_secret", oauth_client_secret),
+            ("client_id", &oauth.oauth_client_id),
+            ("client_secret", &oauth.oauth_client_secret),
         ],
     )
     .await

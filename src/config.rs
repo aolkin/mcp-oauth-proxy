@@ -61,18 +61,24 @@ pub enum StrategyConfig {
         auth_hint: String,
     },
     ChainedOauth {
-        oauth_authorize_url: String,
-        oauth_token_url: String,
-        oauth_client_id: String,
-        #[serde(default)]
-        oauth_client_secret: String,
-        #[serde(default)]
-        oauth_scopes: String,
-        #[serde(default)]
-        oauth_supports_refresh: bool,
-        #[serde(default = "default_oauth_token_accept")]
-        oauth_token_accept: String,
+        #[serde(flatten)]
+        oauth: OAuthConfig,
     },
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+pub struct OAuthConfig {
+    pub oauth_authorize_url: String,
+    pub oauth_token_url: String,
+    pub oauth_client_id: String,
+    #[serde(default)]
+    pub oauth_client_secret: String,
+    #[serde(default)]
+    pub oauth_scopes: String,
+    #[serde(default)]
+    pub oauth_supports_refresh: bool,
+    #[serde(default = "default_oauth_token_accept")]
+    pub oauth_token_accept: String,
 }
 
 fn default_auth_header_format() -> String {
@@ -111,12 +117,8 @@ fn apply_env_overrides(config: &mut Config) {
             name.to_uppercase().replace('-', "_")
         );
         if let Ok(val) = std::env::var(&env_name) {
-            if let StrategyConfig::ChainedOauth {
-                oauth_client_secret,
-                ..
-            } = &mut ds.strategy
-            {
-                *oauth_client_secret = val;
+            if let StrategyConfig::ChainedOauth { oauth } = &mut ds.strategy {
+                oauth.oauth_client_secret = val;
             }
         }
     }
@@ -200,19 +202,12 @@ fn validate_downstreams(downstreams: &HashMap<String, DownstreamConfig>) -> Resu
             ));
         }
 
-        if let StrategyConfig::ChainedOauth {
-            oauth_authorize_url,
-            oauth_token_url,
-            oauth_client_id,
-            oauth_client_secret,
-            ..
-        } = &ds.strategy
-        {
+        if let StrategyConfig::ChainedOauth { oauth } = &ds.strategy {
             let missing: Vec<&str> = [
-                ("oauth_authorize_url", oauth_authorize_url.as_str()),
-                ("oauth_token_url", oauth_token_url.as_str()),
-                ("oauth_client_id", oauth_client_id.as_str()),
-                ("oauth_client_secret", oauth_client_secret.as_str()),
+                ("oauth_authorize_url", oauth.oauth_authorize_url.as_str()),
+                ("oauth_token_url", oauth.oauth_token_url.as_str()),
+                ("oauth_client_id", oauth.oauth_client_id.as_str()),
+                ("oauth_client_secret", oauth.oauth_client_secret.as_str()),
             ]
             .iter()
             .filter(|(_, v)| v.is_empty())

@@ -125,12 +125,7 @@ pub async fn authorize_get(
 
             Html(html).into_response()
         }
-        StrategyConfig::ChainedOauth {
-            oauth_authorize_url,
-            oauth_client_id,
-            oauth_scopes,
-            ..
-        } => {
+        StrategyConfig::ChainedOauth { oauth } => {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -150,14 +145,17 @@ pub async fn authorize_get(
 
             let mut redirect_url = format!(
                 "{}?response_type=code&client_id={}&redirect_uri={}&state={}",
-                oauth_authorize_url,
-                urlencoding::encode(oauth_client_id),
+                oauth.oauth_authorize_url,
+                urlencoding::encode(&oauth.oauth_client_id),
                 urlencoding::encode(&callback_url),
                 urlencoding::encode(&signed_state),
             );
 
-            if !oauth_scopes.is_empty() {
-                redirect_url.push_str(&format!("&scope={}", urlencoding::encode(oauth_scopes)));
+            if !oauth.oauth_scopes.is_empty() {
+                redirect_url.push_str(&format!(
+                    "&scope={}",
+                    urlencoding::encode(&oauth.oauth_scopes)
+                ));
             }
 
             Redirect::to(&redirect_url).into_response()
@@ -243,14 +241,7 @@ pub async fn callback(
         return (StatusCode::NOT_FOUND, "Unknown downstream").into_response();
     };
 
-    let StrategyConfig::ChainedOauth {
-        oauth_token_url,
-        oauth_client_id,
-        oauth_client_secret,
-        oauth_token_accept,
-        ..
-    } = &ds.strategy
-    else {
+    let StrategyConfig::ChainedOauth { oauth } = &ds.strategy else {
         return (
             StatusCode::BAD_REQUEST,
             "Callback only supported for chained_oauth strategy",
@@ -300,12 +291,11 @@ pub async fn callback(
 
     let body = match chained_oauth::post_downstream_token(
         &app.http_client,
-        oauth_token_url,
-        oauth_token_accept,
+        oauth,
         &[
             ("grant_type", "authorization_code"),
-            ("client_id", oauth_client_id.as_str()),
-            ("client_secret", oauth_client_secret.as_str()),
+            ("client_id", oauth.oauth_client_id.as_str()),
+            ("client_secret", oauth.oauth_client_secret.as_str()),
             ("code", downstream_code),
             ("redirect_uri", callback_url.as_str()),
         ],

@@ -1,12 +1,13 @@
+use crate::config::OAuthConfig;
+
 pub async fn post_downstream_token(
     client: &reqwest::Client,
-    token_url: &str,
-    token_accept: &str,
+    oauth: &OAuthConfig,
     form_params: &[(&str, &str)],
 ) -> Result<serde_json::Value, String> {
     let resp = client
-        .post(token_url)
-        .header("Accept", token_accept)
+        .post(&oauth.oauth_token_url)
+        .header("Accept", &oauth.oauth_token_accept)
         .form(form_params)
         .send()
         .await

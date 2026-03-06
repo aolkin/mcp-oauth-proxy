@@ -47,12 +47,14 @@ pub async fn authorization_server(
     let authorization_endpoint = format!("{public}/authorize/mcp/{}", name);
     let token_endpoint = format!("{public}/token/mcp/{}", name);
 
-    let grant_types = match &ds.strategy {
-        StrategyConfig::ChainedOauth {
-            oauth_supports_refresh: true,
-            ..
-        } => json!(["authorization_code", "refresh_token"]),
-        _ => json!(["authorization_code"]),
+    let supports_refresh = matches!(
+        &ds.strategy,
+        StrategyConfig::ChainedOauth { oauth } if oauth.oauth_supports_refresh
+    );
+    let grant_types = if supports_refresh {
+        json!(["authorization_code", "refresh_token"])
+    } else {
+        json!(["authorization_code"])
     };
 
     Json(json!({

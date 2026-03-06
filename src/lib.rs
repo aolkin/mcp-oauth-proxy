@@ -4,6 +4,7 @@ pub mod oauth;
 pub mod proxy;
 pub mod routes;
 
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum::Router;
 use std::sync::Arc;
@@ -12,13 +13,23 @@ use tower_http::trace::TraceLayer;
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<config::Config>,
-    pub state_secret: Vec<u8>,
     pub http_client: reqwest::Client,
 }
 
 impl AppState {
+    pub fn new(config: config::Config, http_client: reqwest::Client) -> Self {
+        Self {
+            config: Arc::new(config),
+            http_client,
+        }
+    }
+
+    pub fn state_secret(&self) -> &[u8] {
+        &self.config.server.state_secret
+    }
+
     pub fn find_downstream(&self, name: &str) -> Option<&config::DownstreamConfig> {
-        self.config.downstreams.iter().find(|ds| ds.name == name)
+        self.config.downstream.get(name)
     }
 }
 
@@ -47,6 +58,7 @@ pub fn build_router(state: AppState) -> Router {
             "/mcp/{name}",
             get(routes::mcp_proxy::mcp_sse).post(routes::mcp_proxy::mcp_post),
         )
+        .layer(DefaultBodyLimit::max(10 * 1_048_576))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

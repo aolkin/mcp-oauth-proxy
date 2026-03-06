@@ -4,7 +4,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde_json::json;
 
-use crate::config::Strategy;
+use crate::config::StrategyConfig;
 use crate::AppState;
 
 /// GET /.well-known/oauth-protected-resource/mcp/:name
@@ -12,15 +12,15 @@ pub async fn protected_resource(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    let Some(ds) = state.find_downstream(&name) else {
+    if state.find_downstream(&name).is_none() {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "unknown downstream"})),
         )
             .into_response();
-    };
+    }
 
-    let resource = format!("{}/mcp/{}", state.config.server.public_url, ds.name);
+    let resource = format!("{}/mcp/{}", state.config.server.public_url, name);
 
     Json(json!({
         "resource": resource,
@@ -43,13 +43,18 @@ pub async fn authorization_server(
     };
 
     let public = &state.config.server.public_url;
-    let issuer = format!("{public}/mcp/{}", ds.name);
-    let authorization_endpoint = format!("{public}/authorize/mcp/{}", ds.name);
-    let token_endpoint = format!("{public}/token/mcp/{}", ds.name);
+    let issuer = format!("{public}/mcp/{}", name);
+    let authorization_endpoint = format!("{public}/authorize/mcp/{}", name);
+    let token_endpoint = format!("{public}/token/mcp/{}", name);
 
-    let grant_types = match (&ds.strategy, ds.oauth_supports_refresh) {
-        (Strategy::ChainedOauth, true) => json!(["authorization_code", "refresh_token"]),
-        _ => json!(["authorization_code"]),
+    let supports_refresh = matches!(
+        &ds.strategy,
+        StrategyConfig::ChainedOauth { oauth } if oauth.oauth_supports_refresh
+    );
+    let grant_types = if supports_refresh {
+        json!(["authorization_code", "refresh_token"])
+    } else {
+        json!(["authorization_code"])
     };
 
     Json(json!({

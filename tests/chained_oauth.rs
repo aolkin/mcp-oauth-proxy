@@ -155,8 +155,7 @@ public_url = "http://127.0.0.1:{proxy_port}"
 state_secret = "{secret}"
 auth_code_ttl = 300
 
-[[downstream]]
-name = "test-oauth"
+[downstream.test-oauth]
 display_name = "Test OAuth Provider"
 strategy = "chained_oauth"
 downstream_url = "http://127.0.0.1:{mock_port}/mcp"
@@ -179,16 +178,7 @@ async fn start_proxy(mock_addr: &SocketAddr) -> SocketAddr {
 
     let toml_str = make_config_toml(mock_addr, &proxy_addr);
     let config: mcp_oauth_proxy::config::Config = toml::from_str(&toml_str).unwrap();
-
-    let state_secret = STANDARD
-        .decode(&config.server.state_secret)
-        .expect("base64 decode");
-
-    let state = mcp_oauth_proxy::AppState {
-        config: Arc::new(config),
-        state_secret,
-        http_client: reqwest::Client::new(),
-    };
+    let state = mcp_oauth_proxy::AppState::new(config, reqwest::Client::new());
 
     let app = mcp_oauth_proxy::build_router(state);
     tokio::spawn(axum::serve(listener, app).into_future());

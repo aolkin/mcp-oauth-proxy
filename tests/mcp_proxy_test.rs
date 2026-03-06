@@ -1,6 +1,5 @@
 use axum::routing::{get, post};
 use axum::Router;
-use std::sync::Arc;
 use tokio::net::TcpListener;
 
 async fn start_mock_downstream() -> String {
@@ -75,22 +74,19 @@ fn build_proxy_app(downstream_url: &str) -> Router {
 public_url = "http://localhost:9999"
 state_secret = "{secret}"
 
-[[downstream]]
-name = "test-sse"
+[downstream.test-sse]
 display_name = "Test SSE"
 strategy = "passthrough"
 downstream_url = "{downstream_url}/sse"
 auth_header_format = "X-API-Key"
 
-[[downstream]]
-name = "test-bearer"
+[downstream.test-bearer]
 display_name = "Test Bearer"
 strategy = "passthrough"
 downstream_url = "{downstream_url}/sse"
 auth_header_format = "Bearer"
 
-[[downstream]]
-name = "test-rpc"
+[downstream.test-rpc]
 display_name = "Test RPC"
 strategy = "passthrough"
 downstream_url = "{downstream_url}/rpc"
@@ -99,15 +95,7 @@ auth_header_format = "X-API-Key"
     );
 
     let config: mcp_oauth_proxy::config::Config = toml::from_str(&toml_str).unwrap();
-    let state_secret = base64::engine::general_purpose::STANDARD
-        .decode(&config.server.state_secret)
-        .unwrap();
-
-    let state = mcp_oauth_proxy::AppState {
-        config: Arc::new(config),
-        state_secret,
-        http_client: reqwest::Client::new(),
-    };
+    let state = mcp_oauth_proxy::AppState::new(config, reqwest::Client::new());
 
     Router::new()
         .route(

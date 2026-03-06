@@ -2,7 +2,6 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use std::future::IntoFuture;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 fn test_secret() -> String {
     STANDARD.encode([0xAA_u8; 32])
@@ -15,8 +14,7 @@ fn make_config_toml(proxy_addr: &SocketAddr) -> String {
 public_url = "http://127.0.0.1:{port}"
 state_secret = "{secret}"
 
-[[downstream]]
-name = "test"
+[downstream.test]
 display_name = "Test Service"
 strategy = "passthrough"
 downstream_url = "http://127.0.0.1:1/mcp"
@@ -32,16 +30,7 @@ async fn start_proxy() -> SocketAddr {
 
     let toml_str = make_config_toml(&addr);
     let config: mcp_oauth_proxy::config::Config = toml::from_str(&toml_str).unwrap();
-
-    let state_secret = STANDARD
-        .decode(&config.server.state_secret)
-        .expect("base64 decode");
-
-    let state = mcp_oauth_proxy::AppState {
-        config: Arc::new(config),
-        state_secret,
-        http_client: reqwest::Client::new(),
-    };
+    let state = mcp_oauth_proxy::AppState::new(config, reqwest::Client::new());
 
     let app = mcp_oauth_proxy::build_router(state);
     tokio::spawn(axum::serve(listener, app).into_future());

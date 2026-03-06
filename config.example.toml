@@ -21,8 +21,7 @@ state_secret = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 # The user provides a token/API key during the OAuth flow.
 # The proxy returns it directly as the access token.
 
-[[downstream]]
-name = "linear"
+[downstream.linear]
 display_name = "Linear"
 strategy = "passthrough"
 downstream_url = "https://mcp.linear.app/sse"
@@ -34,8 +33,7 @@ auth_hint = "Paste your Linear API key (Settings → API → Personal API keys)"
 # --- Chained OAuth example ---
 # The proxy initiates a real OAuth flow with the downstream provider.
 
-[[downstream]]
-name = "github"
+[downstream.github]
 display_name = "GitHub"
 strategy = "chained_oauth"
 downstream_url = "https://api.github.com/mcp"

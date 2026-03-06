@@ -16,12 +16,13 @@ server:
   authCodeTtl: 300
   # Base64-encoded secret key for HMAC state signing and AES-256-GCM auth code encryption.
   # Generate with: openssl rand -base64 32
-  # If existingSecret is set, this is ignored.
+  # Ignored when stateSecretRef is set.
   stateSecret: ""
-  # Use an existing Kubernetes secret for state_secret and downstream OAuth client secrets.
-  # The secret must contain key "state-secret" with the base64-encoded secret.
-  # For chained_oauth downstreams, include key "<name>-client-secret" for each downstream.
-  existingSecret: ""
+  # Reference an existing secret for the state secret instead of providing it inline.
+  # stateSecretRef:
+  #   name: my-secret        # Kubernetes Secret name (required)
+  #   key: state-secret      # key within that Secret (required)
+  stateSecretRef: {}
 
 # Downstream MCP server definitions.
 # Each entry becomes a [downstream.<key>] section in the generated config.
@@ -43,8 +44,11 @@ server:
 #       authorizeUrl: https://github.com/login/oauth/authorize
 #       tokenUrl: https://github.com/login/oauth/access_token
 #       clientId: your-client-id
-#       # clientSecret can be set here or via existingSecret (key: "github-client-secret")
 #       clientSecret: ""
+#       # Or reference an existing secret:
+#       # clientSecretRef:
+#       #   name: github-oauth    # Kubernetes Secret name
+#       #   key: client-secret    # key within that Secret
 #       scopes: "repo user"
 #       supportsRefresh: false
 #       tokenAccept: application/json

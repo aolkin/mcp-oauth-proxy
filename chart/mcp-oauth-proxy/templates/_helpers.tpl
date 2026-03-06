@@ -59,13 +59,3 @@ Service account name.
 {{- end }}
 {{- end }}
 
-{{/*
-Secret name for sensitive values.
-*/}}
-{{- define "mcp-oauth-proxy.secretName" -}}
-{{- if .Values.server.existingSecret }}
-{{- .Values.server.existingSecret }}
-{{- else }}
-{{- include "mcp-oauth-proxy.fullname" . }}
-{{- end }}
-{{- end }}

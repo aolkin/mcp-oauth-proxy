@@ -49,15 +49,25 @@ spec:
             - name: MCP_PROXY_STATE_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "mcp-oauth-proxy.secretName" . }}
+                  {{- if .Values.server.stateSecretRef.name }}
+                  name: {{ .Values.server.stateSecretRef.name }}
+                  key: {{ .Values.server.stateSecretRef.key }}
+                  {{- else }}
+                  name: {{ include "mcp-oauth-proxy.fullname" . }}
                   key: state-secret
+                  {{- end }}
             {{- range $name, $ds := .Values.downstreams }}
             {{- if eq $ds.strategy "chained_oauth" }}
             - name: MCP_PROXY_{{ $name | upper | replace "-" "_" }}_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "mcp-oauth-proxy.secretName" $ }}
+                  {{- if and $ds.oauth $ds.oauth.clientSecretRef }}
+                  name: {{ $ds.oauth.clientSecretRef.name }}
+                  key: {{ $ds.oauth.clientSecretRef.key }}
+                  {{- else }}
+                  name: {{ include "mcp-oauth-proxy.fullname" $ }}
                   key: {{ $name }}-client-secret
+                  {{- end }}
             {{- end }}
             {{- end }}
           ports:

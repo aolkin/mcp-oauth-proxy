@@ -44,12 +44,12 @@ async fn main() {
     }
 
     tracing::info!(
-        downstreams = cfg.downstreams.len(),
+        downstreams = cfg.downstream.len(),
         "Configuration loaded successfully"
     );
-    for ds in &cfg.downstreams {
+    for (name, ds) in &cfg.downstream {
         tracing::info!(
-            name = %ds.name,
+            name = %name,
             strategy = ?ds.strategy,
             downstream_url = %ds.downstream_url,
             "  Downstream configured"

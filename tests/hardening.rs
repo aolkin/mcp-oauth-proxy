@@ -13,8 +13,7 @@ fn make_config_toml(proxy_addr: &SocketAddr) -> String {
 public_url = "http://127.0.0.1:{port}"
 state_secret = "{secret}"
 
-[[downstream]]
-name = "test"
+[downstream.test]
 display_name = "Test Service"
 strategy = "passthrough"
 downstream_url = "http://127.0.0.1:1/mcp"

@@ -155,8 +155,7 @@ public_url = "http://127.0.0.1:{proxy_port}"
 state_secret = "{secret}"
 auth_code_ttl = 300
 
-[[downstream]]
-name = "test-oauth"
+[downstream.test-oauth]
 display_name = "Test OAuth Provider"
 strategy = "chained_oauth"
 downstream_url = "http://127.0.0.1:{mock_port}/mcp"

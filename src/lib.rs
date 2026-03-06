@@ -7,7 +7,6 @@ pub mod routes;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum::Router;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
@@ -16,7 +15,6 @@ pub struct AppState {
     pub config: Arc<config::Config>,
     pub state_secret: Vec<u8>,
     pub http_client: reqwest::Client,
-    downstream_index: Arc<HashMap<String, usize>>,
 }
 
 impl AppState {
@@ -25,25 +23,15 @@ impl AppState {
         state_secret: Vec<u8>,
         http_client: reqwest::Client,
     ) -> Self {
-        let downstream_index: HashMap<String, usize> = config
-            .downstreams
-            .iter()
-            .enumerate()
-            .map(|(i, ds)| (ds.name.clone(), i))
-            .collect();
-
         Self {
             config: Arc::new(config),
             state_secret,
             http_client,
-            downstream_index: Arc::new(downstream_index),
         }
     }
 
     pub fn find_downstream(&self, name: &str) -> Option<&config::DownstreamConfig> {
-        self.downstream_index
-            .get(name)
-            .map(|&i| &self.config.downstreams[i])
+        self.config.downstream.get(name)
     }
 }
 

@@ -12,15 +12,15 @@ pub async fn protected_resource(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    let Some(ds) = state.find_downstream(&name) else {
+    if state.find_downstream(&name).is_none() {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "unknown downstream"})),
         )
             .into_response();
-    };
+    }
 
-    let resource = format!("{}/mcp/{}", state.config.server.public_url, ds.name);
+    let resource = format!("{}/mcp/{}", state.config.server.public_url, name);
 
     Json(json!({
         "resource": resource,
@@ -43,9 +43,9 @@ pub async fn authorization_server(
     };
 
     let public = &state.config.server.public_url;
-    let issuer = format!("{public}/mcp/{}", ds.name);
-    let authorization_endpoint = format!("{public}/authorize/mcp/{}", ds.name);
-    let token_endpoint = format!("{public}/token/mcp/{}", ds.name);
+    let issuer = format!("{public}/mcp/{}", name);
+    let authorization_endpoint = format!("{public}/authorize/mcp/{}", name);
+    let token_endpoint = format!("{public}/token/mcp/{}", name);
 
     let grant_types = match &ds.strategy {
         StrategyConfig::ChainedOauth {

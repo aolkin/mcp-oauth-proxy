@@ -146,10 +146,7 @@ pub async fn authorize_get(
 
             let signed_state = state::sign_state(&state_blob, &state.state_secret);
 
-            let callback_url = format!(
-                "{}/callback/mcp/{}",
-                state.config.server.public_url, ds.name
-            );
+            let callback_url = format!("{}/callback/mcp/{}", state.config.server.public_url, name);
 
             let mut redirect_url = format!(
                 "{}?response_type=code&client_id={}&redirect_uri={}&state={}",
@@ -267,7 +264,7 @@ pub async fn callback(
             .as_deref()
             .unwrap_or("Unknown error");
         tracing::error!(
-            downstream = %ds.name,
+            downstream = %name,
             error = %error,
             description = %desc,
             "Downstream OAuth provider returned an error"
@@ -318,7 +315,7 @@ pub async fn callback(
         Ok(b) => b,
         Err(e) => {
             tracing::error!(
-                downstream = %ds.name,
+                downstream = %name,
                 error = %e,
                 "Failed to exchange downstream authorization code"
             );

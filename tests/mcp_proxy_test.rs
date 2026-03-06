@@ -74,22 +74,19 @@ fn build_proxy_app(downstream_url: &str) -> Router {
 public_url = "http://localhost:9999"
 state_secret = "{secret}"
 
-[[downstream]]
-name = "test-sse"
+[downstream.test-sse]
 display_name = "Test SSE"
 strategy = "passthrough"
 downstream_url = "{downstream_url}/sse"
 auth_header_format = "X-API-Key"
 
-[[downstream]]
-name = "test-bearer"
+[downstream.test-bearer]
 display_name = "Test Bearer"
 strategy = "passthrough"
 downstream_url = "{downstream_url}/sse"
 auth_header_format = "Bearer"
 
-[[downstream]]
-name = "test-rpc"
+[downstream.test-rpc]
 display_name = "Test RPC"
 strategy = "passthrough"
 downstream_url = "{downstream_url}/rpc"

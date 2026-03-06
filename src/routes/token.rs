@@ -68,7 +68,7 @@ pub async fn token(
             };
             handle_refresh_token(
                 &state,
-                &ds.name,
+                &name,
                 oauth_token_url,
                 oauth_client_id,
                 oauth_client_secret,

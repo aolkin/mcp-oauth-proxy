@@ -1,0 +1,6 @@
+apiVersion: v2
+name: mcp-oauth-proxy
+description: A lightweight proxy that bridges OAuth 2.1 authentication for MCP servers
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

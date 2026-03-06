@@ -1,0 +1,82 @@
+replicaCount: 1
+
+image:
+  repository: mcp-oauth-proxy
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+server:
+  publicUrl: "https://mcp.example.com"
+  host: "0.0.0.0"
+  port: 8080
+  authCodeTtl: 300
+  # Base64-encoded secret key for HMAC state signing and AES-256-GCM auth code encryption.
+  # Generate with: openssl rand -base64 32
+  # If existingSecret is set, this is ignored.
+  stateSecret: ""
+  # Use an existing Kubernetes secret for state_secret and downstream OAuth client secrets.
+  # The secret must contain key "state-secret" with the base64-encoded secret.
+  # For chained_oauth downstreams, include key "<name>-client-secret" for each downstream.
+  existingSecret: ""
+
+# Downstream MCP server definitions.
+# Each entry becomes a [downstream.<key>] section in the generated config.
+# Example:
+#
+# downstreams:
+#   linear:
+#     displayName: Linear
+#     strategy: passthrough
+#     downstreamUrl: https://mcp.linear.app/sse
+#     authHint: "Paste your Linear API key"
+#
+#   github:
+#     displayName: GitHub
+#     strategy: chained_oauth
+#     downstreamUrl: https://api.github.com/mcp
+#     authHeaderFormat: token
+#     oauth:
+#       authorizeUrl: https://github.com/login/oauth/authorize
+#       tokenUrl: https://github.com/login/oauth/access_token
+#       clientId: your-client-id
+#       # clientSecret can be set here or via existingSecret (key: "github-client-secret")
+#       clientSecret: ""
+#       scopes: "repo user"
+#       supportsRefresh: false
+#       tokenAccept: application/json
+downstreams: {}
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: mcp.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext: {}

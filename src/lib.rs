@@ -13,21 +13,19 @@ use tower_http::trace::TraceLayer;
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<config::Config>,
-    pub state_secret: Vec<u8>,
     pub http_client: reqwest::Client,
 }
 
 impl AppState {
-    pub fn new(
-        config: config::Config,
-        state_secret: Vec<u8>,
-        http_client: reqwest::Client,
-    ) -> Self {
+    pub fn new(config: config::Config, http_client: reqwest::Client) -> Self {
         Self {
             config: Arc::new(config),
-            state_secret,
             http_client,
         }
+    }
+
+    pub fn state_secret(&self) -> &[u8] {
+        &self.config.server.state_secret
     }
 
     pub fn find_downstream(&self, name: &str) -> Option<&config::DownstreamConfig> {

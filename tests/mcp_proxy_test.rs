@@ -95,11 +95,7 @@ auth_header_format = "X-API-Key"
     );
 
     let config: mcp_oauth_proxy::config::Config = toml::from_str(&toml_str).unwrap();
-    let state_secret = base64::engine::general_purpose::STANDARD
-        .decode(&config.server.state_secret)
-        .unwrap();
-
-    let state = mcp_oauth_proxy::AppState::new(config, state_secret, reqwest::Client::new());
+    let state = mcp_oauth_proxy::AppState::new(config, reqwest::Client::new());
 
     Router::new()
         .route(

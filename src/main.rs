@@ -1,5 +1,3 @@
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
 use clap::Parser;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -56,10 +54,6 @@ async fn main() {
         );
     }
 
-    let state_secret = STANDARD
-        .decode(&cfg.server.state_secret)
-        .expect("state_secret base64 already validated");
-
     let bind_addr = format!("{}:{}", cfg.server.host, cfg.server.port);
     let public_url = cfg.server.public_url.clone();
 
@@ -69,7 +63,7 @@ async fn main() {
         .build()
         .expect("failed to build HTTP client");
 
-    let state = AppState::new(cfg, state_secret, http_client);
+    let state = AppState::new(cfg, http_client);
 
     let app = build_router(state);
 

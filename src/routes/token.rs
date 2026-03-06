@@ -107,7 +107,7 @@ fn handle_authorization_code(state: &AppState, form: TokenForm) -> impl IntoResp
         .into_response();
     };
 
-    let grant = match codes::validate_auth_code(code, &state.state_secret) {
+    let grant = match codes::validate_auth_code(code, state.state_secret()) {
         Ok(g) => g,
         Err(e) => {
             return oauth_error(StatusCode::BAD_REQUEST, "invalid_grant", e).into_response();

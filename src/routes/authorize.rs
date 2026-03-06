@@ -65,19 +65,17 @@ pub async fn authorize_get(
 
     match &ds.strategy {
         StrategyConfig::Passthrough { auth_hint } => {
-            let auth_hint = if auth_hint.is_empty() {
-                "Enter your API token or key for this service.".to_string()
-            } else {
-                html_escape(auth_hint)
+            let auth_hint = match auth_hint {
+                Some(hint) => html_escape(hint),
+                None => "Enter your API token or key for this service.".to_string(),
             };
 
-            let scopes_html = if ds.scopes.is_empty() {
-                String::new()
-            } else {
-                format!(
+            let scopes_html = match &ds.scopes {
+                Some(scopes) => format!(
                     r#"<p style="color:#666;font-size:0.9em">Required scopes: <code>{}</code></p>"#,
-                    html_escape(&ds.scopes)
-                )
+                    html_escape(scopes)
+                ),
+                None => String::new(),
             };
 
             let html = format!(
@@ -139,7 +137,7 @@ pub async fn authorize_get(
                 "exp": now + OAUTH_STATE_TTL_SECS,
             });
 
-            let signed_state = state::sign_state(&state_blob, &state.state_secret);
+            let signed_state = state::sign_state(&state_blob, state.state_secret());
 
             let callback_url = format!("{}/callback/mcp/{}", state.config.server.public_url, name);
 
@@ -151,11 +149,8 @@ pub async fn authorize_get(
                 urlencoding::encode(&signed_state),
             );
 
-            if !oauth.oauth_scopes.is_empty() {
-                redirect_url.push_str(&format!(
-                    "&scope={}",
-                    urlencoding::encode(&oauth.oauth_scopes)
-                ));
+            if let Some(scopes) = &oauth.oauth_scopes {
+                redirect_url.push_str(&format!("&scope={}", urlencoding::encode(scopes)));
             }
 
             Redirect::to(&redirect_url).into_response()
@@ -202,7 +197,7 @@ pub async fn authorize_post(
         &form.code_challenge,
         &form.redirect_uri,
         state.config.server.auth_code_ttl,
-        &state.state_secret,
+        state.state_secret(),
     ) {
         Ok(c) => c,
         Err(e) => {
@@ -275,7 +270,7 @@ pub async fn callback(
         return (StatusCode::BAD_REQUEST, "Missing state parameter").into_response();
     };
 
-    let Some(state_payload) = state::verify_state(signed_state, &app.state_secret) else {
+    let Some(state_payload) = state::verify_state(signed_state, app.state_secret()) else {
         return (StatusCode::BAD_REQUEST, "Invalid or expired state").into_response();
     };
 
@@ -339,7 +334,7 @@ pub async fn callback(
         pkce_challenge,
         claude_redirect_uri,
         app.config.server.auth_code_ttl,
-        &app.state_secret,
+        app.state_secret(),
     ) {
         Ok(c) => c,
         Err(e) => {

@@ -20,11 +20,22 @@ pub struct ServerConfig {
     pub public_url: String,
     /// Secret key used for HMAC-signing state parameters (chained OAuth)
     /// and AES-256-GCM encrypting stateless authorization codes.
-    pub state_secret: String,
+    /// Stored as base64 in TOML, parsed into raw bytes during config loading.
+    #[serde(deserialize_with = "deserialize_base64_secret")]
+    pub state_secret: Vec<u8>,
     /// TTL for encrypted authorization codes (seconds). The expiry is embedded
     /// inside the encrypted code itself — no server-side storage required.
     #[serde(default = "default_auth_code_ttl")]
     pub auth_code_ttl: u64,
+}
+
+fn deserialize_base64_secret<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &s)
+        .map_err(serde::de::Error::custom)
 }
 
 fn default_host() -> String {
@@ -46,8 +57,7 @@ pub struct DownstreamConfig {
     pub downstream_url: String,
     #[serde(default = "default_auth_header_format")]
     pub auth_header_format: String,
-    #[serde(default)]
-    pub scopes: String,
+    pub scopes: Option<String>,
     #[serde(flatten)]
     pub strategy: StrategyConfig,
 }
@@ -57,8 +67,7 @@ pub struct DownstreamConfig {
 #[serde(tag = "strategy", rename_all = "snake_case")]
 pub enum StrategyConfig {
     Passthrough {
-        #[serde(default)]
-        auth_hint: String,
+        auth_hint: Option<String>,
     },
     ChainedOauth {
         #[serde(flatten)]
@@ -71,10 +80,8 @@ pub struct OAuthConfig {
     pub oauth_authorize_url: String,
     pub oauth_token_url: String,
     pub oauth_client_id: String,
-    #[serde(default)]
     pub oauth_client_secret: String,
-    #[serde(default)]
-    pub oauth_scopes: String,
+    pub oauth_scopes: Option<String>,
     #[serde(default)]
     pub oauth_supports_refresh: bool,
     #[serde(default = "default_oauth_token_accept")]
@@ -97,20 +104,20 @@ pub fn load_config(path: &Path) -> Result<Config, String> {
     let mut config: Config =
         toml::from_str(&content).map_err(|e| format!("Failed to parse TOML config: {e}"))?;
 
-    apply_env_overrides(&mut config);
+    apply_env_overrides(&mut config)?;
     validate(&config)?;
 
     Ok(config)
 }
 
 /// Apply environment variable overrides.
-fn apply_env_overrides(config: &mut Config) {
-    // MCP_PROXY_STATE_SECRET overrides server.state_secret
+fn apply_env_overrides(config: &mut Config) -> Result<(), String> {
     if let Ok(val) = std::env::var("MCP_PROXY_STATE_SECRET") {
-        config.server.state_secret = val;
+        config.server.state_secret =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &val)
+                .map_err(|e| format!("MCP_PROXY_STATE_SECRET is not valid base64: {e}"))?;
     }
 
-    // MCP_PROXY_<NAME>_CLIENT_SECRET overrides downstream oauth_client_secret
     for (name, ds) in &mut config.downstream {
         let env_name = format!(
             "MCP_PROXY_{}_CLIENT_SECRET",
@@ -122,6 +129,8 @@ fn apply_env_overrides(config: &mut Config) {
             }
         }
     }
+
+    Ok(())
 }
 
 /// Validate the entire configuration. Returns an error string on failure.
@@ -150,24 +159,11 @@ fn validate_server(server: &ServerConfig) -> Result<(), String> {
         );
     }
 
-    if server.state_secret.is_empty() {
-        return Err("server.state_secret is required".to_string());
-    }
-    match base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        &server.state_secret,
-    ) {
-        Ok(bytes) => {
-            if bytes.len() < 32 {
-                return Err(format!(
-                    "server.state_secret must be at least 32 bytes when base64-decoded (got {} bytes). Generate with: openssl rand -base64 32",
-                    bytes.len()
-                ));
-            }
-        }
-        Err(e) => {
-            return Err(format!("server.state_secret is not valid base64: {e}"));
-        }
+    if server.state_secret.len() < 32 {
+        return Err(format!(
+            "server.state_secret must be at least 32 bytes (got {} bytes). Generate with: openssl rand -base64 32",
+            server.state_secret.len()
+        ));
     }
 
     Ok(())
@@ -203,22 +199,10 @@ fn validate_downstreams(downstreams: &HashMap<String, DownstreamConfig>) -> Resu
         }
 
         if let StrategyConfig::ChainedOauth { oauth } = &ds.strategy {
-            let missing: Vec<&str> = [
-                ("oauth_authorize_url", oauth.oauth_authorize_url.as_str()),
-                ("oauth_token_url", oauth.oauth_token_url.as_str()),
-                ("oauth_client_id", oauth.oauth_client_id.as_str()),
-                ("oauth_client_secret", oauth.oauth_client_secret.as_str()),
-            ]
-            .iter()
-            .filter(|(_, v)| v.is_empty())
-            .map(|(k, _)| *k)
-            .collect();
-
-            if !missing.is_empty() {
+            if oauth.oauth_client_secret.is_empty() {
                 return Err(format!(
-                    "downstream '{}': chained_oauth strategy requires: {}",
-                    name,
-                    missing.join(", ")
+                    "downstream '{}': oauth_client_secret must not be empty",
+                    name
                 ));
             }
         }

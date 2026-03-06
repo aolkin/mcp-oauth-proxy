@@ -178,12 +178,7 @@ async fn start_proxy(mock_addr: &SocketAddr) -> SocketAddr {
 
     let toml_str = make_config_toml(mock_addr, &proxy_addr);
     let config: mcp_oauth_proxy::config::Config = toml::from_str(&toml_str).unwrap();
-
-    let state_secret = STANDARD
-        .decode(&config.server.state_secret)
-        .expect("base64 decode");
-
-    let state = mcp_oauth_proxy::AppState::new(config, state_secret, reqwest::Client::new());
+    let state = mcp_oauth_proxy::AppState::new(config, reqwest::Client::new());
 
     let app = mcp_oauth_proxy::build_router(state);
     tokio::spawn(axum::serve(listener, app).into_future());

@@ -4,7 +4,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde_json::json;
 
-use crate::config::Strategy;
+use crate::config::StrategyConfig;
 use crate::AppState;
 
 /// GET /.well-known/oauth-protected-resource/mcp/:name
@@ -47,8 +47,11 @@ pub async fn authorization_server(
     let authorization_endpoint = format!("{public}/authorize/mcp/{}", ds.name);
     let token_endpoint = format!("{public}/token/mcp/{}", ds.name);
 
-    let grant_types = match (&ds.strategy, ds.oauth_supports_refresh) {
-        (Strategy::ChainedOauth, true) => json!(["authorization_code", "refresh_token"]),
+    let grant_types = match &ds.strategy {
+        StrategyConfig::ChainedOauth {
+            oauth_supports_refresh: true,
+            ..
+        } => json!(["authorization_code", "refresh_token"]),
         _ => json!(["authorization_code"]),
     };
 

@@ -38,45 +38,41 @@ fn default_auth_code_ttl() -> u64 {
     300
 }
 
-/// Authentication strategy for a downstream MCP server.
-#[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum Strategy {
-    Passthrough,
-    ChainedOauth,
-}
-
 /// Configuration for a single downstream MCP server.
 #[derive(Debug, Deserialize)]
 pub struct DownstreamConfig {
     pub name: String,
     pub display_name: String,
-    pub strategy: Strategy,
     pub downstream_url: String,
     #[serde(default = "default_auth_header_format")]
     pub auth_header_format: String,
     #[serde(default)]
     pub scopes: String,
+    #[serde(flatten)]
+    pub strategy: StrategyConfig,
+}
 
-    // Passthrough-only fields
-    #[serde(default)]
-    pub auth_hint: String,
-
-    // Chained OAuth fields
-    #[serde(default)]
-    pub oauth_authorize_url: String,
-    #[serde(default)]
-    pub oauth_token_url: String,
-    #[serde(default)]
-    pub oauth_client_id: String,
-    #[serde(default)]
-    pub oauth_client_secret: String,
-    #[serde(default)]
-    pub oauth_scopes: String,
-    #[serde(default)]
-    pub oauth_supports_refresh: bool,
-    #[serde(default = "default_oauth_token_accept")]
-    pub oauth_token_accept: String,
+/// Strategy-specific configuration, discriminated by the `strategy` field in TOML.
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(tag = "strategy", rename_all = "snake_case")]
+pub enum StrategyConfig {
+    Passthrough {
+        #[serde(default)]
+        auth_hint: String,
+    },
+    ChainedOauth {
+        oauth_authorize_url: String,
+        oauth_token_url: String,
+        oauth_client_id: String,
+        #[serde(default)]
+        oauth_client_secret: String,
+        #[serde(default)]
+        oauth_scopes: String,
+        #[serde(default)]
+        oauth_supports_refresh: bool,
+        #[serde(default = "default_oauth_token_accept")]
+        oauth_token_accept: String,
+    },
 }
 
 fn default_auth_header_format() -> String {
@@ -115,7 +111,13 @@ fn apply_env_overrides(config: &mut Config) {
             ds.name.to_uppercase().replace('-', "_")
         );
         if let Ok(val) = std::env::var(&env_name) {
-            ds.oauth_client_secret = val;
+            if let StrategyConfig::ChainedOauth {
+                oauth_client_secret,
+                ..
+            } = &mut ds.strategy
+            {
+                *oauth_client_secret = val;
+            }
         }
     }
 }
@@ -128,17 +130,14 @@ fn validate(config: &Config) -> Result<(), String> {
 }
 
 fn validate_server(server: &ServerConfig) -> Result<(), String> {
-    // public_url must not be empty
     if server.public_url.is_empty() {
         return Err("server.public_url is required".to_string());
     }
 
-    // public_url must not have trailing slash
     if server.public_url.ends_with('/') {
         return Err("server.public_url must not have a trailing slash".to_string());
     }
 
-    // Warn (but allow) http:// for local dev; require https:// otherwise
     if server.public_url.starts_with("http://") {
         tracing::warn!(
             "server.public_url uses http:// — HTTPS is required for production deployments"
@@ -149,7 +148,6 @@ fn validate_server(server: &ServerConfig) -> Result<(), String> {
         );
     }
 
-    // state_secret must decode to at least 32 bytes
     if server.state_secret.is_empty() {
         return Err("server.state_secret is required".to_string());
     }
@@ -182,7 +180,6 @@ fn validate_downstreams(downstreams: &[DownstreamConfig]) -> Result<(), String> 
     let mut seen_names = std::collections::HashSet::new();
 
     for ds in downstreams {
-        // Name format
         if !name_regex.is_match(&ds.name) {
             return Err(format!(
                 "downstream '{}': name must match ^[a-z0-9-]+$ (lowercase alphanumeric and hyphens only)",
@@ -190,7 +187,6 @@ fn validate_downstreams(downstreams: &[DownstreamConfig]) -> Result<(), String> 
             ));
         }
 
-        // Name uniqueness
         if !seen_names.insert(&ds.name) {
             return Err(format!(
                 "downstream '{}': duplicate name — each downstream must have a unique name",
@@ -198,7 +194,6 @@ fn validate_downstreams(downstreams: &[DownstreamConfig]) -> Result<(), String> 
             ));
         }
 
-        // display_name required
         if ds.display_name.is_empty() {
             return Err(format!(
                 "downstream '{}': display_name is required",
@@ -206,7 +201,6 @@ fn validate_downstreams(downstreams: &[DownstreamConfig]) -> Result<(), String> 
             ));
         }
 
-        // downstream_url must be a valid URL
         if ds.downstream_url.is_empty() {
             return Err(format!(
                 "downstream '{}': downstream_url is required",
@@ -220,34 +214,19 @@ fn validate_downstreams(downstreams: &[DownstreamConfig]) -> Result<(), String> 
             ));
         }
 
-        if ds.strategy == Strategy::Passthrough {
-            let oauth_fields_set: Vec<&str> = [
-                ("oauth_authorize_url", ds.oauth_authorize_url.as_str()),
-                ("oauth_token_url", ds.oauth_token_url.as_str()),
-                ("oauth_client_id", ds.oauth_client_id.as_str()),
-                ("oauth_client_secret", ds.oauth_client_secret.as_str()),
-                ("oauth_scopes", ds.oauth_scopes.as_str()),
-            ]
-            .iter()
-            .filter(|(_, v)| !v.is_empty())
-            .map(|(k, _)| *k)
-            .collect();
-
-            if !oauth_fields_set.is_empty() {
-                tracing::warn!(
-                    downstream = %ds.name,
-                    fields = %oauth_fields_set.join(", "),
-                    "Passthrough downstream has oauth_* fields set (these are ignored)"
-                );
-            }
-        }
-
-        if ds.strategy == Strategy::ChainedOauth {
+        if let StrategyConfig::ChainedOauth {
+            oauth_authorize_url,
+            oauth_token_url,
+            oauth_client_id,
+            oauth_client_secret,
+            ..
+        } = &ds.strategy
+        {
             let missing: Vec<&str> = [
-                ("oauth_authorize_url", ds.oauth_authorize_url.as_str()),
-                ("oauth_token_url", ds.oauth_token_url.as_str()),
-                ("oauth_client_id", ds.oauth_client_id.as_str()),
-                ("oauth_client_secret", ds.oauth_client_secret.as_str()),
+                ("oauth_authorize_url", oauth_authorize_url.as_str()),
+                ("oauth_token_url", oauth_token_url.as_str()),
+                ("oauth_client_id", oauth_client_id.as_str()),
+                ("oauth_client_secret", oauth_client_secret.as_str()),
             ]
             .iter()
             .filter(|(_, v)| v.is_empty())
@@ -263,7 +242,6 @@ fn validate_downstreams(downstreams: &[DownstreamConfig]) -> Result<(), String> 
             }
         }
 
-        // Validate auth_header_format
         let valid_formats = ["Bearer", "token", "Basic", "X-API-Key"];
         if !valid_formats.contains(&ds.auth_header_format.as_str())
             && !ds.auth_header_format.starts_with("X-")
@@ -297,29 +275,95 @@ downstream_url = "https://downstream.example.com/mcp"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.downstreams.len(), 1);
-        assert_eq!(config.downstreams[0].strategy, Strategy::Passthrough);
+        assert!(matches!(
+            config.downstreams[0].strategy,
+            StrategyConfig::Passthrough { .. }
+        ));
+    }
+
+    #[test]
+    fn test_parse_chained_oauth() {
+        let toml_str = r#"
+[server]
+public_url = "https://example.com"
+state_secret = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+[[downstream]]
+name = "test"
+display_name = "Test"
+strategy = "chained_oauth"
+downstream_url = "https://downstream.example.com/mcp"
+oauth_authorize_url = "https://provider.com/authorize"
+oauth_token_url = "https://provider.com/token"
+oauth_client_id = "my-client"
+oauth_client_secret = "my-secret"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(matches!(
+            config.downstreams[0].strategy,
+            StrategyConfig::ChainedOauth { .. }
+        ));
+    }
+
+    #[test]
+    fn test_passthrough_ignores_oauth_fields() {
+        let toml_str = r#"
+[server]
+public_url = "https://example.com"
+state_secret = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+[[downstream]]
+name = "test"
+display_name = "Test"
+strategy = "passthrough"
+downstream_url = "https://downstream.example.com/mcp"
+oauth_authorize_url = "https://provider.com/authorize"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(matches!(
+            config.downstreams[0].strategy,
+            StrategyConfig::Passthrough { .. }
+        ));
+    }
+
+    #[test]
+    fn test_chained_oauth_missing_required_fields() {
+        let toml_str = r#"
+[server]
+public_url = "https://example.com"
+state_secret = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+[[downstream]]
+name = "test"
+display_name = "Test"
+strategy = "chained_oauth"
+downstream_url = "https://downstream.example.com/mcp"
+"#;
+        let result: Result<Config, _> = toml::from_str(toml_str);
+        assert!(
+            result.is_err(),
+            "chained_oauth should require oauth_authorize_url, oauth_token_url, etc."
+        );
     }
 
     #[test]
     fn test_invalid_name_format() {
-        let ds = vec![DownstreamConfig {
-            name: "INVALID_NAME".to_string(),
-            display_name: "Test".to_string(),
-            strategy: Strategy::Passthrough,
-            downstream_url: "https://example.com".to_string(),
-            auth_header_format: "Bearer".to_string(),
-            scopes: String::new(),
-            auth_hint: String::new(),
-            oauth_authorize_url: String::new(),
-            oauth_token_url: String::new(),
-            oauth_client_id: String::new(),
-            oauth_client_secret: String::new(),
-            oauth_scopes: String::new(),
-            oauth_supports_refresh: false,
-            oauth_token_accept: "application/json".to_string(),
-        }];
-        let result = validate_downstreams(&ds);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("must match"));
+        let toml_str = r#"
+[server]
+public_url = "https://example.com"
+state_secret = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+[[downstream]]
+name = "INVALID_NAME"
+display_name = "Test"
+strategy = "passthrough"
+downstream_url = "https://example.com"
+"#;
+        let config: Result<Config, _> = toml::from_str(toml_str);
+        if let Ok(config) = config {
+            let result = validate_downstreams(&config.downstreams);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().contains("must match"));
+        }
     }
 }

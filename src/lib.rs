@@ -72,7 +72,7 @@ pub fn build_router(state: AppState) -> Router {
             "/mcp/{name}",
             get(routes::mcp_proxy::mcp_sse).post(routes::mcp_proxy::mcp_post),
         )
-        .layer(DefaultBodyLimit::max(1_048_576))
+        .layer(DefaultBodyLimit::max(10 * 1_048_576))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

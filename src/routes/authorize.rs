@@ -7,7 +7,7 @@ use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::auth::chained_oauth;
-use crate::config::Strategy;
+use crate::config::StrategyConfig;
 use crate::oauth::codes::{self, DownstreamTokens};
 use crate::oauth::state;
 use crate::AppState;
@@ -63,12 +63,12 @@ pub async fn authorize_get(
 
     tracing::info!(downstream = %name, strategy = ?ds.strategy, "Authorize request");
 
-    match ds.strategy {
-        Strategy::Passthrough => {
-            let auth_hint = if ds.auth_hint.is_empty() {
+    match &ds.strategy {
+        StrategyConfig::Passthrough { auth_hint } => {
+            let auth_hint = if auth_hint.is_empty() {
                 "Enter your API token or key for this service.".to_string()
             } else {
-                html_escape(&ds.auth_hint)
+                html_escape(auth_hint)
             };
 
             let scopes_html = if ds.scopes.is_empty() {
@@ -125,7 +125,12 @@ pub async fn authorize_get(
 
             Html(html).into_response()
         }
-        Strategy::ChainedOauth => {
+        StrategyConfig::ChainedOauth {
+            oauth_authorize_url,
+            oauth_client_id,
+            oauth_scopes,
+            ..
+        } => {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -148,14 +153,14 @@ pub async fn authorize_get(
 
             let mut redirect_url = format!(
                 "{}?response_type=code&client_id={}&redirect_uri={}&state={}",
-                ds.oauth_authorize_url,
-                urlencoding::encode(&ds.oauth_client_id),
+                oauth_authorize_url,
+                urlencoding::encode(oauth_client_id),
                 urlencoding::encode(&callback_url),
                 urlencoding::encode(&signed_state),
             );
 
-            if !ds.oauth_scopes.is_empty() {
-                redirect_url.push_str(&format!("&scope={}", urlencoding::encode(&ds.oauth_scopes)));
+            if !oauth_scopes.is_empty() {
+                redirect_url.push_str(&format!("&scope={}", urlencoding::encode(oauth_scopes)));
             }
 
             Redirect::to(&redirect_url).into_response()
@@ -183,7 +188,7 @@ pub async fn authorize_post(
         return (StatusCode::NOT_FOUND, "Unknown downstream").into_response();
     };
 
-    if ds.strategy != Strategy::Passthrough {
+    if !matches!(ds.strategy, StrategyConfig::Passthrough { .. }) {
         return (
             StatusCode::BAD_REQUEST,
             "POST authorize only supported for passthrough strategy",
@@ -241,13 +246,20 @@ pub async fn callback(
         return (StatusCode::NOT_FOUND, "Unknown downstream").into_response();
     };
 
-    if ds.strategy != Strategy::ChainedOauth {
+    let StrategyConfig::ChainedOauth {
+        oauth_token_url,
+        oauth_client_id,
+        oauth_client_secret,
+        oauth_token_accept,
+        ..
+    } = &ds.strategy
+    else {
         return (
             StatusCode::BAD_REQUEST,
             "Callback only supported for chained_oauth strategy",
         )
             .into_response();
-    }
+    };
 
     if let Some(error) = &params.error {
         let desc = params
@@ -287,8 +299,23 @@ pub async fn callback(
         return (StatusCode::BAD_REQUEST, "Malformed state payload").into_response();
     };
 
-    let tokens = match exchange_downstream_code(&app, ds, downstream_code, &name).await {
-        Ok(t) => t,
+    let callback_url = format!("{}/callback/mcp/{}", app.config.server.public_url, name);
+
+    let body = match chained_oauth::post_downstream_token(
+        &app.http_client,
+        oauth_token_url,
+        oauth_token_accept,
+        &[
+            ("grant_type", "authorization_code"),
+            ("client_id", oauth_client_id.as_str()),
+            ("client_secret", oauth_client_secret.as_str()),
+            ("code", downstream_code),
+            ("redirect_uri", callback_url.as_str()),
+        ],
+    )
+    .await
+    {
+        Ok(b) => b,
         Err(e) => {
             tracing::error!(
                 downstream = %ds.name,
@@ -301,6 +328,23 @@ pub async fn callback(
             )
                 .into_response();
         }
+    };
+
+    let access_token = match body["access_token"].as_str() {
+        Some(t) => t.to_string(),
+        None => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                "Missing access_token in downstream response",
+            )
+                .into_response();
+        }
+    };
+
+    let tokens = DownstreamTokens::ChainedOAuth {
+        access_token,
+        refresh_token: body["refresh_token"].as_str().map(String::from),
+        expires_in: body["expires_in"].as_u64(),
     };
 
     let code = match codes::create_auth_code(
@@ -327,42 +371,6 @@ pub async fn callback(
     );
 
     Redirect::to(&redirect_url).into_response()
-}
-
-async fn exchange_downstream_code(
-    app: &AppState,
-    ds: &crate::config::DownstreamConfig,
-    code: &str,
-    name: &str,
-) -> Result<DownstreamTokens, String> {
-    let callback_url = format!("{}/callback/mcp/{}", app.config.server.public_url, name);
-
-    let body = chained_oauth::post_downstream_token(
-        &app.http_client,
-        ds,
-        &[
-            ("grant_type", "authorization_code"),
-            ("client_id", ds.oauth_client_id.as_str()),
-            ("client_secret", ds.oauth_client_secret.as_str()),
-            ("code", code),
-            ("redirect_uri", callback_url.as_str()),
-        ],
-    )
-    .await?;
-
-    let access_token = body["access_token"]
-        .as_str()
-        .ok_or("Missing access_token in downstream response")?
-        .to_string();
-
-    let refresh_token = body["refresh_token"].as_str().map(String::from);
-    let expires_in = body["expires_in"].as_u64();
-
-    Ok(DownstreamTokens::ChainedOAuth {
-        access_token,
-        refresh_token,
-        expires_in,
-    })
 }
 
 fn html_escape(s: &str) -> String {

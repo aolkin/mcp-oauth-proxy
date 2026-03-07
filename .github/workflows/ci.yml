@@ -40,3 +40,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rust
       - run: cargo test --workspace
+
+  helm-lint:
+    name: Helm Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint chart/mcp-oauth-proxy
+      - run: helm template test-release chart/mcp-oauth-proxy

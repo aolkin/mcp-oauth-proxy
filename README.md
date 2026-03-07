@@ -1,5 +1,7 @@
 # mcp-oauth-proxy
 
+> This repository has been archived in favor of Cloudflare MCP Server Portal, which accomplishes the same goal.
+
 A lightweight Rust proxy that sits between Claude's MCP connector (which requires OAuth 2.1) and downstream MCP servers that use other authentication methods. It presents a compliant OAuth 2.1 interface to Claude while handling credential translation to downstream services.
 
 ## What This Solves

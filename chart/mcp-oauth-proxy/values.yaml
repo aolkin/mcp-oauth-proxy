@@ -1,0 +1,72 @@
+replicaCount: 1
+
+image:
+  repository: mcp-oauth-proxy
+  tag: ""
+  pullPolicy: IfNotPresent
+
+server:
+  publicUrl: "https://mcp.example.com"
+  host: "0.0.0.0"
+  port: 8080
+  authCodeTtl: 300
+  # Base64-encoded secret key for HMAC state signing and AES-256-GCM auth code encryption.
+  # Generate with: openssl rand -base64 32
+  # Ignored when stateSecretRef is set.
+  stateSecret: ""
+  # Reference an existing secret for the state secret instead of providing it inline.
+  # stateSecretRef:
+  #   name: my-secret        # Kubernetes Secret name (required)
+  #   key: state-secret      # key within that Secret (required)
+  stateSecretRef: {}
+
+# Downstream MCP server definitions.
+# Each entry becomes a [downstream.<key>] section in the generated config.
+# Example:
+#
+# downstreams:
+#   linear:
+#     displayName: Linear
+#     strategy: passthrough
+#     downstreamUrl: https://mcp.linear.app/sse
+#     authHint: "Paste your Linear API key"
+#
+#   github:
+#     displayName: GitHub
+#     strategy: chained_oauth
+#     downstreamUrl: https://api.github.com/mcp
+#     authHeaderFormat: token
+#     oauth:
+#       authorizeUrl: https://github.com/login/oauth/authorize
+#       tokenUrl: https://github.com/login/oauth/access_token
+#       clientId: your-client-id
+#       clientSecret: ""
+#       # Or reference an existing secret:
+#       # clientSecretRef:
+#       #   name: github-oauth    # Kubernetes Secret name
+#       #   key: client-secret    # key within that Secret
+#       scopes: "repo user"
+#       supportsRefresh: false
+#       tokenAccept: application/json
+downstreams: {}
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: mcp.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "mcp-oauth-proxy.fullname" . }}
+  name: {{ .Release.Name }}
   labels:
     {{- include "mcp-oauth-proxy.labels" . | nindent 4 }}
 spec:
@@ -27,7 +27,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "mcp-oauth-proxy.serviceAccountName" . }}
+      serviceAccountName: {{ .Release.Name }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -53,7 +53,7 @@ spec:
                   name: {{ .Values.server.stateSecretRef.name }}
                   key: {{ .Values.server.stateSecretRef.key }}
                   {{- else }}
-                  name: {{ include "mcp-oauth-proxy.fullname" . }}
+                  name: {{ .Release.Name }}
                   key: state-secret
                   {{- end }}
             {{- range $name, $ds := .Values.downstreams }}
@@ -65,7 +65,7 @@ spec:
                   name: {{ $ds.oauth.clientSecretRef.name }}
                   key: {{ $ds.oauth.clientSecretRef.key }}
                   {{- else }}
-                  name: {{ include "mcp-oauth-proxy.fullname" $ }}
+                  name: {{ $.Release.Name }}
                   key: {{ $name }}-client-secret
                   {{- end }}
             {{- end }}
@@ -97,7 +97,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: {{ include "mcp-oauth-proxy.fullname" . }}
+            name: {{ .Release.Name }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -2,7 +2,7 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "mcp-oauth-proxy.fullname" . }}
+  name: {{ .Release.Name }}
   labels:
     {{- include "mcp-oauth-proxy.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
@@ -33,7 +33,7 @@ spec:
             pathType: {{ .pathType }}
             backend:
               service:
-                name: {{ include "mcp-oauth-proxy.fullname" $ }}
+                name: {{ $.Release.Name }}
                 port:
                   name: http
           {{- end }}

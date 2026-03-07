@@ -52,10 +52,6 @@ server:
 #       tokenAccept: application/json
 downstreams: {}
 
-serviceAccount:
-  create: true
-  annotations: {}
-
 service:
   type: ClusterIP
   port: 80
